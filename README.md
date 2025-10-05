@@ -103,14 +103,16 @@ python invoice_renamer.py complex-statement.pdf --all-pages --move-to ./statemen
 
 ## macOS Integration
 
-On macOS, you can create a Finder Quick Action shortcut to easily trigger the file renamer directly from the Finder context menu. This allows you to right-click on files and rename them without using the command line.
+On macOS, you can create a Finder Quick Action shortcut to easily trigger the file renamer directly from the Finder context menu. This allows you to right-click on files and rename them in place without using the command line.
 
 Here's an example shortcut that integrates with this tool: [OSX File Renamer Quick Action](https://www.icloud.com/shortcuts/cd48aad565124fe4b366074fe38a223e)
 
 To use it:
 1. Open the shortcut link on your Mac
-2. The shortcut will prompt for a target directory (optional) and handle dry-run mode
+2. The shortcut automatically renames the selected file(s) in their current location
 3. Add it to your Quick Actions so it appears in Finder's right-click menu
+
+Note: This particular shortcut performs direct renaming. For advanced options like dry-run mode or moving to a target directory, use the command line directly.
 
 ## Naming Convention
 
