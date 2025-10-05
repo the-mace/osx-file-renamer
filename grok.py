@@ -22,19 +22,23 @@ import base64
 import mimetypes
 import subprocess
 import tempfile
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any
+
 
 class GrokError(Exception):
     """Base exception for Grok API client errors"""
     pass
 
+
 class FileProcessingError(GrokError):
     """Raised when file processing fails"""
     pass
 
+
 class APIError(GrokError):
     """Raised when API calls fail"""
     pass
+
 
 # Constants
 MAX_RAW_SIZE = 7_500_000  # ~7.5MB raw = ~10MB base64
@@ -53,6 +57,7 @@ USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
 # Supported file extensions
 IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif']
 COMPRESSED_FORMATS = ['.png', '.bmp', '.tiff', '.tif', '.pbm', '.ppm', '.pgm']
+
 
 def process_image_file(file_path: str, mime_type: Optional[str] = None) -> Dict[str, Any]:
     """Process image file and return appropriate format for Grok API with size optimization"""
@@ -91,6 +96,7 @@ def process_image_file(file_path: str, mime_type: Optional[str] = None) -> Dict[
         print(f"Error processing image file '{file_path}': {e}", file=sys.stderr)
         sys.exit(1)
 
+
 def compress_image(file_path: str, original_data: bytes, max_size: int) -> Optional[bytes]:
     """Try various image compression methods to reduce file size
 
@@ -114,7 +120,7 @@ def compress_image(file_path: str, original_data: bytes, max_size: int) -> Optio
                         temp_path = tmp_file.name
 
                     result = subprocess.run(['convert', file_path, '-quality', str(quality), temp_path],
-                                          capture_output=True, text=True, timeout=COMPRESSION_TIMEOUT)
+                                            capture_output=True, text=True, timeout=COMPRESSION_TIMEOUT)
 
                     if result.returncode == 0 and os.path.exists(temp_path):
                         with open(temp_path, 'rb') as f:
@@ -141,7 +147,7 @@ def compress_image(file_path: str, original_data: bytes, max_size: int) -> Optio
                         temp_path = tmp_file.name
 
                     result = subprocess.run(['convert', file_path, '-quality', str(quality), temp_path],
-                                          capture_output=True, text=True, timeout=COMPRESSION_TIMEOUT)
+                                            capture_output=True, text=True, timeout=COMPRESSION_TIMEOUT)
 
                     if result.returncode == 0 and os.path.exists(temp_path):
                         with open(temp_path, 'rb') as f:
@@ -167,7 +173,7 @@ def compress_image(file_path: str, original_data: bytes, max_size: int) -> Optio
                     temp_path = tmp_file.name
 
                 result = subprocess.run(['convert', file_path, '-resize', scale, '-quality', '70', temp_path],
-                                      capture_output=True, text=True, timeout=COMPRESSION_TIMEOUT)
+                                        capture_output=True, text=True, timeout=COMPRESSION_TIMEOUT)
 
                 if result.returncode == 0 and os.path.exists(temp_path):
                     with open(temp_path, 'rb') as f:
@@ -192,6 +198,7 @@ def compress_image(file_path: str, original_data: bytes, max_size: int) -> Optio
     except Exception as e:
         print(f"Error during image compression: {e}", file=sys.stderr)
         return None
+
 
 def extract_embedded_images(file_path, all_pages=False):
     """Try to extract embedded images from PDF using pdfimages (faster than conversion)"""
@@ -269,8 +276,8 @@ def extract_embedded_images(file_path, all_pages=False):
                             except ImportError:
                                 # Fall back to ImageMagick convert
                                 png_file = img_file + '.png'
-                                result = subprocess.run(['convert', img_file, png_file],
-                                                      capture_output=True, text=True, timeout=15, check=True)
+                                subprocess.run(['convert', img_file, png_file],
+                                               capture_output=True, text=True, timeout=15, check=True)
                                 if os.path.exists(png_file):
                                     img_file = png_file
                                     mime_type = "image/png"
@@ -308,6 +315,7 @@ def extract_embedded_images(file_path, all_pages=False):
         print(f"Error extracting embedded images: {e}", file=sys.stderr)
         return None
 
+
 def convert_pdf_to_images(file_path, max_pages=5):
     """Convert multiple PDF pages to images and return combined content"""
 
@@ -340,13 +348,13 @@ def convert_pdf_to_images(file_path, max_pages=5):
             pdftoppm_args.extend(['-l', str(max_pages)])
             print(f"Converting PDF to PNG at 100 DPI (max {max_pages} pages)...", file=sys.stderr)
         else:
-            print(f"Converting PDF to PNG at 100 DPI (all pages)...", file=sys.stderr)
+            print("Converting PDF to PNG at 100 DPI (all pages)...", file=sys.stderr)
         pdftoppm_args.extend([file_path, temp_image_path[:-4]])
 
         result = subprocess.run(pdftoppm_args, capture_output=True, text=True, check=True, timeout=60)
 
         # Collect all generated images
-        print(f"PDF conversion completed, collecting generated images...", file=sys.stderr)
+        print("PDF conversion completed, collecting generated images...", file=sys.stderr)
         image_content = []
         page_num = 1
 
@@ -373,7 +381,7 @@ def convert_pdf_to_images(file_path, max_pages=5):
 
                     # Try pngquant first (best compression for text)
                     pngquant_result = subprocess.run(['pngquant', '--force', '--output', compressed_path, actual_image_path],
-                                                   capture_output=True)
+                                                     capture_output=True)
 
                     if pngquant_result.returncode == 0 and os.path.exists(compressed_path):
                         # Use compressed version if it's smaller
@@ -390,8 +398,8 @@ def convert_pdf_to_images(file_path, max_pages=5):
                             low_dpi_path = actual_image_path.replace('.png', f'_dpi{dpi}.png')
                             try:
                                 subprocess.run([pdftoppm_cmd, '-png', '-r', str(dpi), '-f', str(page_num), '-l', str(page_num),
-                                              file_path, low_dpi_path[:-4]],
-                                             capture_output=True, text=True, check=True, timeout=30)
+                                               file_path, low_dpi_path[:-4]],
+                                               capture_output=True, text=True, check=True, timeout=30)
 
                                 low_dpi_actual = low_dpi_path[:-4] + f'-{page_num}.png'
                                 if os.path.exists(low_dpi_actual):
@@ -453,7 +461,7 @@ def convert_pdf_to_images(file_path, max_pages=5):
             }
 
     except subprocess.TimeoutExpired:
-        print(f"Error: PDF conversion timed out. The PDF may be corrupted or extremely complex.", file=sys.stderr)
+        print("Error: PDF conversion timed out. The PDF may be corrupted or extremely complex.", file=sys.stderr)
         sys.exit(1)
     except subprocess.CalledProcessError as e:
         print(f"Error converting PDF to images: {e}", file=sys.stderr)
@@ -463,6 +471,7 @@ def convert_pdf_to_images(file_path, max_pages=5):
     except Exception as e:
         print(f"Unexpected error during PDF conversion: {e}", file=sys.stderr)
         sys.exit(1)
+
 
 def read_file_content(file_path, all_pages=False):
     """Read file content and return appropriate format for Grok API"""
@@ -495,7 +504,7 @@ def read_file_content(file_path, all_pages=False):
                         raise Exception("pdftotext not found. Please install poppler-utils.")
 
                 result = subprocess.run([pdftotext_cmd, file_path, '-'],
-                                      capture_output=True, text=True, check=True)
+                                        capture_output=True, text=True, check=True)
                 text_content = result.stdout.strip()
 
                 # Check if meaningful text was extracted (more than just whitespace/control chars)
@@ -507,7 +516,7 @@ def read_file_content(file_path, all_pages=False):
                     extracted_image = extract_embedded_images(file_path, all_pages=all_pages)
                     if extracted_image:
                         return extracted_image
-                    print(f"No embedded images found. Converting to images for vision analysis...", file=sys.stderr)
+                    print("No embedded images found. Converting to images for vision analysis...", file=sys.stderr)
                     max_pages = None if all_pages else 1
                     return convert_pdf_to_images(file_path, max_pages=max_pages)
                 else:
@@ -538,6 +547,7 @@ def read_file_content(file_path, all_pages=False):
         print(f"Error reading file '{file_path}': {e}", file=sys.stderr)
         sys.exit(1)
 
+
 def load_env_file():
     """Load environment variables from ~/.env file"""
     env_file = os.path.expanduser("~/.env")
@@ -558,6 +568,7 @@ def load_env_file():
                             os.environ[key] = value
         except Exception as e:
             print(f"Warning: Could not read ~/.env file: {e}", file=sys.stderr)
+
 
 def call_grok_api(prompt, model="grok-4-fast-reasoning", file_path=None, all_pages=False, auto_vision=True):
     api_key = os.getenv("GROK_API_KEY")
@@ -648,19 +659,21 @@ def call_grok_api(prompt, model="grok-4-fast-reasoning", file_path=None, all_pag
         print(f"Error parsing API response: {e}", file=sys.stderr)
         sys.exit(1)
 
+
 def main():
     parser = argparse.ArgumentParser(description="Call Grok API with a prompt")
     parser.add_argument("prompt", help="The input prompt to send to Grok")
     parser.add_argument("--model", default="grok-4-fast-reasoning",
-                       help="The model to use (default: grok-4-fast-reasoning)")
+                        help="The model to use (default: grok-4-fast-reasoning)")
     parser.add_argument("--file", help="Optional file to include (PDFs auto-fallback text→vision, text files use text model, images use vision model)")
     parser.add_argument("--all-pages", action="store_true",
-                       help="Process all pages of PDF (default: first page only)")
+                        help="Process all pages of PDF (default: first page only)")
 
     args = parser.parse_args()
 
     result = call_grok_api(args.prompt, args.model, args.file, args.all_pages)
     print(result)
+
 
 if __name__ == "__main__":
     main()

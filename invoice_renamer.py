@@ -11,11 +11,12 @@ import hashlib
 import shutil
 
 try:
-    from titlecase import titlecase # type: ignore
+    from titlecase import titlecase  # type: ignore
 except ImportError:
     # Fallback if titlecase not available
     def titlecase(text):
         return text.title()
+
 
 def setup_logging():
     """Setup logging to /tmp/invoice_renamer.log with rotation to keep file size manageable"""
@@ -48,6 +49,7 @@ def setup_logging():
         datefmt='%Y-%m-%d %H:%M:%S'
     )
     return logging.getLogger(__name__)
+
 
 def call_grok_api(prompt, file_path, all_pages=False):
     """Call grok.py script to extract invoice information"""
@@ -83,6 +85,7 @@ def call_grok_api(prompt, file_path, all_pages=False):
         logger.error("grok.py script not found in the same directory")
         raise  # Re-raise to let caller handle
 
+
 def extract_invoice_info(file_path, all_pages=False):
     """Extract business name and date from invoice using Grok"""
     logger = logging.getLogger(__name__)
@@ -108,7 +111,8 @@ def extract_invoice_info(file_path, all_pages=False):
    - "Letter" - for general correspondence
    - "Report" - for financial reports, summaries (only use if document explicitly says "report" and not "statement")
    - "Map" - for property maps, site plans, layout diagrams
-   - IMPORTANT: If the document contains the word "statement" prominently, classify it as "Statement" not "Report"
+   - IMPORTANT: If the document contains the word "statement" prominently,
+     classify it as "Statement" not "Report"
    - Choose the most specific type that applies
 3. Invoice/statement date
 4. Invoice number (if available):
@@ -130,7 +134,8 @@ def extract_invoice_info(file_path, all_pages=False):
      * Credit cards: "Credit Card" (or specific tier like "Platinum", "Gold" if clearly labeled as such)
      * Insurance/Investment accounts: Use specific types like "Annuity", "VUL", "Life Insurance", "Brokerage", "401k" (NOT generic terms like "Investment Account" or "Account")
      * If only generic "Account" or "Investment Account" is found, leave this null
-   - Last 4 digits: Extract the last 4 digits of the account/card number (look for patterns like "xxxx1234", "ending in 1234", "account ending in 1234", "2-51000" means last 4 is "1000")
+   - Last 4 digits: Extract the last 4 digits of the account/card number
+     (look for patterns like "xxxx1234", "ending in 1234", "account ending in 1234", "2-51000" means last 4 is "1000")
    - Extract these even from notices/letters if they reference a specific account
    - IMPORTANT: If this is a portfolio summary or overview showing MULTIPLE accounts (2 or more different account numbers):
      * Set account_type to "Portfolio"
@@ -210,6 +215,7 @@ If you cannot find any piece of information, use null for that field."""
             'account_last_4': None
         }
 
+
 def clean_filename(text, limit_words=None):
     """Clean text to be safe for filename use and apply proper capitalization"""
     if not text:
@@ -246,6 +252,7 @@ def clean_filename(text, limit_words=None):
         cleaned = cleaned[:50].rstrip()
 
     return cleaned if cleaned else "Unknown"
+
 
 def format_date(date_str):
     """Convert date string to YYYYMMDD format"""
@@ -291,6 +298,7 @@ def format_date(date_str):
             pass
 
     return "00000000"
+
 
 def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     """Rename invoice file based on extracted information and optionally move to target directory"""
@@ -420,7 +428,7 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
         # Safety check to avoid infinite loop
         if counter > 100:
             logger.error("Too many duplicate files, giving up")
-            print(f"Error: Too many files with similar names exist", file=sys.stderr)
+            print("Error: Too many files with similar names exist", file=sys.stderr)
             return False
 
     new_filename = os.path.basename(new_file_path)
@@ -509,6 +517,7 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
         print(f"Error renaming/moving file: {e}", file=sys.stderr)
         return False
 
+
 def main():
     # Setup logging first
     logger = setup_logging()
@@ -541,6 +550,7 @@ def main():
         logger.error(f"Unexpected error in main: {e}")
         print(f"Unexpected error: {e}", file=sys.stderr)
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
