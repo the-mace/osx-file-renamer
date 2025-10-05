@@ -1,0 +1,5 @@
+[flake8]
+# Ignore:
+extend-ignore = E201,E202,E402, E722
+max-line-length = 180
+exclude = .tox,target,.git,.idea,migrations,staticfiles,venv
