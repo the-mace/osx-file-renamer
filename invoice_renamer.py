@@ -310,10 +310,30 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     business_name = clean_filename(info.get('business_name'), limit_words=4)
     document_type = clean_filename(info.get('document_type')) if info.get('document_type') else 'Document'
     invoice_date = format_date(info.get('invoice_date'))
-    invoice_number = clean_filename(info.get('invoice_number')) if info.get('invoice_number') else None
+    invoice_number = info.get('invoice_number')
+    if invoice_number:
+        # If invoice_number looks like an account number (long digits), take last 4 digits
+        invoice_number_cleaned = re.sub(r'[^\d]', '', invoice_number)  # Keep only digits
+        if len(invoice_number_cleaned) >= 4:
+            invoice_number = invoice_number_cleaned[-4:]  # Take last 4 digits
+        else:
+            invoice_number = invoice_number_cleaned
+        invoice_number = clean_filename(invoice_number) if invoice_number else None
+    else:
+        invoice_number = None
     patient_animal_name = clean_filename(info.get('patient_animal_name')) if info.get('patient_animal_name') else None
     account_type = clean_filename(info.get('account_type')) if info.get('account_type') else None
-    account_last_4 = clean_filename(info.get('account_last_4')) if info.get('account_last_4') else None
+    account_last_4 = info.get('account_last_4')
+    if account_last_4:
+        # Ensure only the last 4 digits are used
+        account_last_4_cleaned = re.sub(r'[^\d]', '', account_last_4)  # Keep only digits
+        if len(account_last_4_cleaned) >= 4:
+            account_last_4 = account_last_4_cleaned[-4:]  # Take last 4 digits
+        else:
+            account_last_4 = account_last_4_cleaned  # If fewer than 4, use as-is
+        account_last_4 = clean_filename(account_last_4) if account_last_4 else None
+    else:
+        account_last_4 = None
 
     logger.info(f"Extracted business name: {business_name}")
     logger.info(f"Extracted document type: {document_type}")
