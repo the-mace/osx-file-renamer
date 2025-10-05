@@ -6,6 +6,12 @@ A command-line tool for automatically renaming invoice and document files based 
 
 This tool analyzes invoice, statement, and document files using AI (Grok API) to extract business names, document types, and dates, then applies a consistent naming convention to help organize files.
 
+## Data Privacy Warning
+
+⚠️ **Important:** This tool sends the contents of your files to xAI's Grok API for analysis. By using this tool, you acknowledge that file contents (including potentially sensitive financial or personal information) are being transmitted to and processed by external AI services.
+
+Please review xAI's [terms of service](https://x.ai/terms/) and [privacy policy](https://x.ai/privacy/) to understand how your data is handled, stored, and secured before proceeding. If you have concerns about data privacy, consider alternative local processing options.
+
 ## Features
 
 - **AI-Powered Analysis**: Uses Grok API to intelligently extract information from various document types
@@ -95,6 +101,17 @@ python invoice_renamer.py invoice.pdf --move-to ./organized/
 python invoice_renamer.py complex-statement.pdf --all-pages --move-to ./statements/
 ```
 
+## macOS Integration
+
+On macOS, you can create a Finder Quick Action shortcut to easily trigger the file renamer directly from the Finder context menu. This allows you to right-click on files and rename them without using the command line.
+
+Here's an example shortcut that integrates with this tool: [OSX File Renamer Quick Action](https://www.icloud.com/shortcuts/cd48aad565124fe4b366074fe38a223e)
+
+To use it:
+1. Open the shortcut link on your Mac
+2. The shortcut will prompt for a target directory (optional) and handle dry-run mode
+3. Add it to your Quick Actions so it appears in Finder's right-click menu
+
 ## Naming Convention
 
 Files are renamed using the following format:
@@ -182,6 +199,11 @@ The tool provides detailed error messages for common issues. Check the log file 
 This project is open source. See LICENSE file for details.
 
 ## Changelog
+
+### Version 1.0.1
+- **Security/Fix**: Limit account numbers and invoice numbers to last 4 digits only for privacy and naming consistency
+- **Documentation**: Added data privacy warning about AI data transmission
+- **macOS Integration**: Added guide for using Finder Quick Actions with example shortcut
 
 ### Version 1.0.0
 - Initial release
