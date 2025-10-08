@@ -320,6 +320,11 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     # Extract information from invoice
     info = extract_invoice_info(file_path, all_pages=all_pages)
 
+    # Clean up any "null" strings returned by API - convert to None
+    for key in info:
+        if info[key] == "null":
+            info[key] = None
+
     business_name = clean_filename(info.get('business_name'), limit_words=4)
     document_type = clean_filename(info.get('document_type')) if info.get('document_type') else 'Document'
     invoice_date = format_date(info.get('invoice_date'))
@@ -366,10 +371,14 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
 
     # Create new filename with document type, patient/animal name and invoice number if available
     # Format: Business Name [Account-Type] Document-Type [Last4] [- Patient/Animal] [Invoice#] Date
-    # For bank-related documents, insert account type before document type
-    if account_type:
-        if account_type.lower() == 'portfolio' or not account_last_4:
-            # Portfolio statement or account type without last 4 digits
+    # For bank-related/credit card documents, insert account type before document type
+    # But avoid including account_type if it would duplicate the business name
+    should_include_account = (account_type and account_last_4 and
+                              account_type.lower() not in ['life insurance', 'annuity', 'vul'])
+
+    if should_include_account:
+        if account_type.lower() == 'portfolio':
+            # Portfolio statement
             filename_parts = [business_name, account_type, document_type]
         else:
             # Single account with type and last 4 digits
