@@ -96,7 +96,7 @@ def extract_invoice_info(file_path, all_pages=False):
    - Use the most recognizable ISSUING company/bank name
    - For credit card statements: Use the issuing bank (e.g., "American Express", "Chase", "Citibank") - NOT the card product name
    - For store credit cards: Use the store name (e.g., "Target", "Best Buy") rather than the backing bank
-   - For co-branded cards: Use the issuing bank (e.g., "Chase" for Chase Sapphire, not "Sapphire")
+   - For co-branded cards: Use the co-brand name when the brand is clearly recognizable and prominent (e.g., "JetBlue", "Delta", "Hilton", "Southwest") over the issuing bank
    - For subsidiaries/billing entities: Use the parent company name if it's more recognizable (e.g., "Tesla" instead of "Blue Skies Solar II, LLC")
    - For utility bills: Use the main utility company name
    - For subscription services: Use the service name (e.g., "Netflix", "Spotify")
@@ -104,6 +104,7 @@ def extract_invoice_info(file_path, all_pages=False):
    - Prioritize the brand the customer would recognize over legal billing entities
 2. Document type (REQUIRED - use ONE word to classify):
    - "Invoice" - for bills, invoices requesting payment
+   - "Quote" - for quotes, estimates, proposals, bids, pricing proposals that are not requests for payment
    - "Statement" - for bank statements, credit card statements, account statements, insurance/annuity statements (if the document says "statement" on it, use this)
    - "Receipt" - for proof of payment, transaction receipts (NOT trade confirmations)
    - "Confirmation" - for trade confirmations, order confirmations, transaction confirmations
@@ -250,6 +251,10 @@ def clean_filename(text, limit_words=None):
     # Limit length
     if len(cleaned) > 50:
         cleaned = cleaned[:50].rstrip()
+
+    # Shorten common terms for concise filenames
+    if cleaned == "Credit Card":
+        cleaned = "CC"
 
     return cleaned if cleaned else "Unknown"
 
