@@ -223,7 +223,7 @@ def clean_filename(text, limit_words=None):
         return "Unknown"
 
     # Remove or replace problematic characters
-    cleaned = re.sub(r'[<>:"/\\|?*]', '', text)  # Remove illegal filename chars
+    cleaned = re.sub(r'[<>:"/\\|?*,]', '', text)  # Remove illegal filename chars
     cleaned = re.sub(r'\s+', ' ', cleaned)        # Normalize whitespace
     cleaned = cleaned.strip()                     # Remove leading/trailing space
 
@@ -325,6 +325,16 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
         if info[key] == "null":
             info[key] = None
 
+    # Sanitize account and invoice number based on document type
+    # Only include account details for statements, notices, and letters
+    if info.get('document_type') not in ['Statement', 'Notice', 'Letter']:
+        info['account_type'] = None
+        info['account_last_4'] = None
+
+    # For receipts and confirmations, don't treat numbers as invoice numbers
+    if info.get('document_type') in ['Receipt', 'Confirmation']:
+        info['invoice_number'] = None
+
     business_name = clean_filename(info.get('business_name'), limit_words=4)
     document_type = clean_filename(info.get('document_type')) if info.get('document_type') else 'Document'
     invoice_date = format_date(info.get('invoice_date'))
@@ -343,12 +353,17 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     account_type = clean_filename(info.get('account_type')) if info.get('account_type') else None
     account_last_4 = info.get('account_last_4')
     if account_last_4:
-        # Ensure only the last 4 digits are used
+        # Ensure only the last 4 digits are used and verify it's exactly 4 digits
         account_last_4_cleaned = re.sub(r'[^\d]', '', account_last_4)  # Keep only digits
-        if len(account_last_4_cleaned) >= 4:
-            account_last_4 = account_last_4_cleaned[-4:]  # Take last 4 digits
+        if len(account_last_4_cleaned) == 4:
+            account_last_4 = account_last_4_cleaned  # Use as-is if exactly 4 digits
+        elif len(account_last_4_cleaned) > 4:
+            account_last_4 = account_last_4_cleaned[-4:]  # Take last 4 digits if longer
         else:
-            account_last_4 = account_last_4_cleaned  # If fewer than 4, use as-is
+            # Too short, not a valid account number
+            account_last_4 = None
+            # If we don't have valid last 4, clear account type too since it's incomplete
+            account_type = None
         account_last_4 = clean_filename(account_last_4) if account_last_4 else None
     else:
         account_last_4 = None
@@ -389,10 +404,13 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     if patient_animal_name:
         filename_parts.append(f"- {patient_animal_name}")
 
-    # Only include invoice number if we don't have account information
+    # Only include invoice number if we don't have account information and it's exactly 4 digits
     # (statements typically use account numbers instead of invoice numbers)
     if invoice_number and not account_type:
-        filename_parts.append(invoice_number)
+        # Only include if it's exactly 4 digits (to avoid random numbers being misidentified as account numbers)
+        if len(re.sub(r'[^\d]', '', invoice_number)) == 4:
+            filename_parts.append(invoice_number)
+        # If not 4 digits, skip it - it's probably not a valid account number
 
     # Only include date if it's valid (not 00000000)
     if invoice_date and invoice_date != "00000000":
