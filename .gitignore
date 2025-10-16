@@ -46,7 +46,9 @@ logs/
 eject.app/
 
 # Logs
-/tmp/invoice_renamer.log
+# Log file is now stored in platform-specific temp directory
+# Typically /tmp on Unix-like systems or system temp directory on Windows
+# Add system temp directory patterns as needed
 
 # Test files
 test_rename/

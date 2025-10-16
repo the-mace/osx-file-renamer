@@ -156,7 +156,7 @@ The tool accepts these optional parameters:
 
 ## Logging
 
-Logs are automatically written to `/tmp/invoice_renamer.log` with automatic rotation to keep file size manageable. Log levels include DEBUG, INFO, WARNING, and ERROR.
+Logs are automatically written to a platform-specific temporary directory (typically `/tmp` on Unix-like systems or system temp directory on Windows) with automatic rotation to keep file size manageable. Log levels include DEBUG, INFO, WARNING, and ERROR.
 
 ## Troubleshooting
 
@@ -186,7 +186,7 @@ brew install imagemagick poppler pngquant
 
 ### Error Messages
 
-The tool provides detailed error messages for common issues. Check the log file at `/tmp/invoice_renamer.log` for additional debugging information.
+The tool provides detailed error messages for common issues. Check the log file in your system's temporary directory for additional debugging information.
 
 ## Contributing
 

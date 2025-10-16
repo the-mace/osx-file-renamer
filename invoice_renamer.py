@@ -9,6 +9,7 @@ from datetime import datetime
 import logging
 import hashlib
 import shutil
+import tempfile
 
 try:
     from titlecase import titlecase  # type: ignore
@@ -19,8 +20,9 @@ except ImportError:
 
 
 def setup_logging():
-    """Setup logging to /tmp/invoice_renamer.log with rotation to keep file size manageable"""
-    log_file = '/tmp/invoice_renamer.log'
+    """Setup logging to platform-specific temp directory with rotation to keep file size manageable"""
+    temp_dir = tempfile.gettempdir()
+    log_file = os.path.join(temp_dir, 'invoice_renamer.log')
 
     # Check if log file exists and is too large (>100KB), truncate to last 50KB
     if os.path.exists(log_file):
