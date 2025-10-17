@@ -243,7 +243,7 @@ def extract_embedded_images(file_path, all_pages=False):
                 pdfimages_args.extend(['-f', '1', '-l', '1'])  # First page only
             pdfimages_args.extend([file_path, temp_prefix])
 
-            result = subprocess.run(pdfimages_args, capture_output=True, text=True, timeout=15)
+            result = subprocess.run(pdfimages_args, capture_output=True, text=True, timeout=PDF_EXTRACTION_TIMEOUT)
 
             if result.returncode == 0:
                 # Look for extracted images
@@ -287,7 +287,7 @@ def extract_embedded_images(file_path, all_pages=False):
                                     png_file = img_file + '.png'
                                     try:
                                         subprocess.run(['convert', img_file, png_file],
-                                                       capture_output=True, text=True, timeout=15, check=True)
+                                                       capture_output=True, text=True, timeout=CONVERSION_TIMEOUT, check=True)
                                         img_file = png_file
                                         mime_type = "image/png"
                                     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
@@ -298,7 +298,7 @@ def extract_embedded_images(file_path, all_pages=False):
                                 png_file = img_file + '.png'
                                 try:
                                     subprocess.run(['convert', img_file, png_file],
-                                                   capture_output=True, text=True, timeout=15, check=True)
+                                                   capture_output=True, text=True, timeout=CONVERSION_TIMEOUT, check=True)
                                     img_file = png_file
                                     mime_type = "image/png"
                                 except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
@@ -371,7 +371,7 @@ def convert_pdf_to_images(file_path, max_pages=5):
             print("Converting PDF to PNG at 100 DPI (all pages)...", file=sys.stderr)
         pdftoppm_args.extend([file_path, temp_image_path[:-4]])
 
-        result = subprocess.run(pdftoppm_args, capture_output=True, text=True, check=True, timeout=60)
+        result = subprocess.run(pdftoppm_args, capture_output=True, text=True, check=True, timeout=CONVERSION_TIMEOUT)
 
         # Collect all generated images
         print("PDF conversion completed, collecting generated images...", file=sys.stderr)
@@ -417,7 +417,7 @@ def convert_pdf_to_images(file_path, max_pages=5):
                             try:
                                 subprocess.run([pdftoppm_cmd, '-png', '-r', str(dpi), '-f', str(page_num), '-l', str(page_num),
                                                file_path, low_dpi_path[:-4]],
-                                               capture_output=True, text=True, check=True, timeout=30)
+                                               capture_output=True, text=True, check=True, timeout=COMPRESSION_TIMEOUT)
 
                                 low_dpi_actual = low_dpi_path[:-4] + f'-{page_num}.png'
                                 if os.path.exists(low_dpi_actual):
