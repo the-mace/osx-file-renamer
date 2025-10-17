@@ -22,7 +22,16 @@ import base64
 import mimetypes
 import subprocess
 import tempfile
+import glob
 from typing import Optional, Dict, Any
+
+# Optional imports for image processing
+try:
+    import PIL.Image
+    import PIL.ImageOps
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
 
 
 class GrokError(Exception):
@@ -238,7 +247,6 @@ def extract_embedded_images(file_path, all_pages=False):
 
             if result.returncode == 0:
                 # Look for extracted images
-                import glob
                 extracted_files = glob.glob(temp_prefix + '*')
 
                 if extracted_files:
@@ -252,38 +260,50 @@ def extract_embedded_images(file_path, all_pages=False):
 
                         # Convert unsupported formats (pbm, ppm, pgm) to PNG
                         if ext_lower in ['pbm', 'ppm', 'pgm']:
-                            try:
-                                from PIL import Image, ImageOps
-                                png_file = img_file + '.png'
-                                img = Image.open(img_file)
-                                # Convert 1-bit images to 8-bit grayscale for better compatibility
-                                if img.mode in ('1', 'L'):
-                                    img = img.convert('L')
-                                elif img.mode not in ('RGB', 'RGBA'):
-                                    img = img.convert('RGB')
+                            if HAS_PIL:
+                                try:
+                                    png_file = img_file + '.png'
+                                    img = PIL.Image.open(img_file)
+                                    # Convert 1-bit images to 8-bit grayscale for better compatibility
+                                    if img.mode in ('1', 'L'):
+                                        img = img.convert('L')
+                                    elif img.mode not in ('RGB', 'RGBA'):
+                                        img = img.convert('RGB')
 
-                                # Check if image might be inverted (mostly black background)
-                                if img.mode == 'L':
-                                    pixels = list(img.getdata())
-                                    avg_brightness = sum(pixels) / len(pixels)
-                                    # If image is very dark (avg < 50), it might be inverted
-                                    if avg_brightness < 50:
-                                        img = ImageOps.invert(img)
+                                    # Check if image might be inverted (mostly black background)
+                                    if img.mode == 'L':
+                                        pixels = list(img.getdata())
+                                        avg_brightness = sum(pixels) / len(pixels)
+                                        # If image is very dark (avg < 50), it might be inverted
+                                        if avg_brightness < 50:
+                                            img = PIL.ImageOps.invert(img)
 
-                                img.save(png_file, 'PNG', optimize=True)
-                                img_file = png_file
-                                mime_type = "image/png"
-                            except ImportError:
-                                # Fall back to ImageMagick convert
-                                png_file = img_file + '.png'
-                                subprocess.run(['convert', img_file, png_file],
-                                               capture_output=True, text=True, timeout=15, check=True)
-                                if os.path.exists(png_file):
+                                    img.save(png_file, 'PNG', optimize=True)
                                     img_file = png_file
                                     mime_type = "image/png"
-                            except Exception as e:
-                                print(f"Warning: Error converting {ext_lower.upper()}: {e}", file=sys.stderr)
-                                mime_type = "image/png"  # Try PNG mime type anyway
+                                except (AttributeError, IOError, OSError) as e:
+                                    print(f"Warning: Error converting {ext_lower.upper()}: {e}. Falling back to ImageMagick.", file=sys.stderr)
+                                    # Fall back to ImageMagick convert
+                                    png_file = img_file + '.png'
+                                    try:
+                                        subprocess.run(['convert', img_file, png_file],
+                                                       capture_output=True, text=True, timeout=15, check=True)
+                                        img_file = png_file
+                                        mime_type = "image/png"
+                                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                                        print(f"Warning: ImageMagick conversion also failed: {e}", file=sys.stderr)
+                                        mime_type = "image/png"  # Try PNG mime type anyway
+                            else:
+                                # PIL not available, fall back to ImageMagick convert
+                                png_file = img_file + '.png'
+                                try:
+                                    subprocess.run(['convert', img_file, png_file],
+                                                   capture_output=True, text=True, timeout=15, check=True)
+                                    img_file = png_file
+                                    mime_type = "image/png"
+                                except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                                    print(f"Warning: ImageMagick conversion failed: {e}. No PIL available.", file=sys.stderr)
+                                    mime_type = "image/png"  # Try PNG mime type anyway
                         else:
                             mime_type = f"image/{ext_lower}" if ext_lower else "image/jpeg"
 
@@ -405,7 +425,7 @@ def convert_pdf_to_images(file_path, max_pages=5):
                                         test_data = f.read()
                                     os.unlink(low_dpi_actual)
                                     print(f"DPI {dpi} version: {len(test_data):,} bytes", file=sys.stderr)
-                                    if len(test_data) <= max_raw_size:
+                                    if len(test_data) <= MAX_RAW_SIZE:
                                         file_data = test_data
                                         break
                                     elif dpi == 50:
@@ -419,9 +439,9 @@ def convert_pdf_to_images(file_path, max_pages=5):
                     print("Warning: Could not compress image", file=sys.stderr)
 
             # Final hard check - fail if still too large
-            if len(file_data) > max_raw_size:
+            if len(file_data) > MAX_RAW_SIZE:
                 print(f"Error: Image still too large after compression ({len(file_data):,} bytes raw, would be {int(len(file_data) * 1.33):,} bytes base64)", file=sys.stderr)
-                print(f"Maximum allowed: {max_raw_size:,} bytes raw (10MB base64 limit)", file=sys.stderr)
+                print(f"Maximum allowed: {MAX_RAW_SIZE:,} bytes raw (10MB base64 limit)", file=sys.stderr)
                 sys.exit(1)
 
             base64_data = base64.b64encode(file_data).decode('utf-8')
