@@ -539,8 +539,12 @@ def read_file_content(file_path, all_pages=False):
                 content = f.read()
                 return {"type": "text", "content": content}
         except UnicodeDecodeError:
-            # If text reading fails, treat as binary (images)
-            return process_image_file(file_path, mime_type)
+            # If text reading fails, check if it's a supported image format
+            if file_ext in IMAGE_EXTENSIONS:
+                return process_image_file(file_path, mime_type)
+            else:
+                print(f"Error: File type '{file_ext}' is not supported. Supported formats: {', '.join(['.pdf'] + IMAGE_EXTENSIONS + ['text files'])}", file=sys.stderr)
+                sys.exit(1)
     except Exception as e:
         print(f"Error reading file '{file_path}': {e}", file=sys.stderr)
         sys.exit(1)
