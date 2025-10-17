@@ -1,12 +1,10 @@
+import sys
 import pytest
 import os
-import json
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
+from grok import call_grok_api, load_env_file
 
-import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from grok import call_grok_api, load_env_file, APIError
 
 
 class TestCallGrokApi:
@@ -46,6 +44,7 @@ class TestCallGrokApi:
         """Test loading API key from env file when not in environment."""
         # Mock that no API key exists initially, but env file provides it
         call_count = [0]
+
         def mock_getenv_side_effect(key):
             call_count[0] += 1
             # First call - no key, second call (after env file) - key exists
@@ -53,6 +52,7 @@ class TestCallGrokApi:
 
         mock_getenv.side_effect = mock_getenv_side_effect
 
+        # Mock successful response for the actual API call
         mock_response = MagicMock()
         mock_response.read.return_value = b'{"choices": [{"message": {"content": "Response"}}]}'
         mock_response.__enter__.return_value = mock_response

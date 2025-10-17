@@ -1,5 +1,4 @@
 import pytest
-import tempfile
 import os
 import base64
 import json
@@ -46,7 +45,6 @@ def mock_env_file(tmp_path):
     env_file.write_text('GROK_API_KEY=test_api_key_here\nexport OTHER_VAR=value\n')
 
     # Mock expanduser to point to our test directory
-    import os
     original_expanduser = os.path.expanduser
 
     def mock_expanduser(path):

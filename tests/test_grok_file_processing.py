@@ -1,7 +1,6 @@
 import pytest
 import os
 import base64
-import subprocess
 from unittest.mock import patch, MagicMock
 
 # Import the functions to test from grok.py
@@ -66,8 +65,6 @@ class TestProcessImageFile:
 
 
 class TestCompressImage:
-
-
 
     def test_compress_image_failure_returns_none(self):
         """Test that compression failure returns None."""

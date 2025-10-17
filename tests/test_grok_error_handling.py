@@ -1,9 +1,9 @@
 import pytest
-import sys
 import subprocess
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 
 import os
+import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from grok import call_grok_api, load_env_file
