@@ -211,7 +211,6 @@ def compress_image(file_path: str, original_data: bytes, max_size: int) -> Optio
 
 def extract_embedded_images(file_path, all_pages=False):
     """Try to extract embedded images from PDF using pdfimages (faster than conversion)"""
-    import tempfile
 
     try:
         # Try to find pdfimages in common locations
