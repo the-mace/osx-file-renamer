@@ -370,9 +370,7 @@ def convert_pdf_to_images(file_path, max_pages=5):
                 file_data = f.read()
 
             # Hard limit: 10MB base64 = ~7.5MB raw file
-            max_raw_size = 7_500_000  # ~7.5MB raw = ~10MB base64
-
-            if len(file_data) > max_raw_size:
+            if len(file_data) > MAX_RAW_SIZE:
                 print(f"Image too large ({len(file_data):,} bytes), compressing...", file=sys.stderr)
                 # Try to compress using pngquant if available, otherwise reduce DPI further
                 try:
@@ -429,7 +427,7 @@ def convert_pdf_to_images(file_path, max_pages=5):
             base64_data = base64.b64encode(file_data).decode('utf-8')
 
             # Double check base64 size
-            if len(base64_data) > 10_000_000:  # 10MB
+            if len(base64_data) > MAX_BASE64_SIZE:
                 print(f"Error: Base64 image size ({len(base64_data):,} bytes) exceeds 10MB limit", file=sys.stderr)
                 sys.exit(1)
 
