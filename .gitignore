@@ -19,39 +19,94 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
 # Virtual environments
 .venv/
 venv/
 ENV/
 env/
+.python-version.bak
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.cover
+.hypothesis/
+.tox/
+nosetests.xml
+coverage.xml
+*.log
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*.swn
 *~
+.project
+.pydevproject
+.settings/
 
-# OS
+# macOS
 .DS_Store
 .DS_Store?
 ._*
 .Spotlight-V100
 .Trashes
+.AppleDouble
+.LSOverride
+*.icloud
+Icon
+
+# Windows
 ehthumbs.db
 Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Temporary files
 tmp/
-logs/
+temp/
+*.tmp
+*.bak
+*.backup
 eject.app/
 
 # Logs
-# Log file is now stored in platform-specific temp directory
-# Typically /tmp on Unix-like systems or system temp directory on Windows
-# Add system temp directory patterns as needed
+logs/
+*.log
+# Note: Log file is stored in platform-specific temp directory
+# Typically /tmp on Unix-like systems or %TEMP% on Windows
 
-# Test files
+# Test files and directories
 test_rename/
+test_output/
+scratch/
 
-# Environment files
+# Environment and secrets
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+.env.local
+.env.*.local
+
+# Documentation builds
+docs/_build/
+docs/.doctrees/
+site/
+
+# Project specific
+# Add any project-specific ignore patterns here

@@ -1,5 +1,38 @@
 [flake8]
-# Ignore:
-extend-ignore = E201,E202,E402, E722
+# Maximum line length (PEP 8 recommends 79, extended to 180 for readability)
 max-line-length = 180
-exclude = .tox,target,.git,.idea,migrations,staticfiles,venv
+
+# Ignored error codes:
+# E201 - whitespace after '(' (stylistic preference)
+# E202 - whitespace before ')' (stylistic preference)
+# E402 - module level import not at top of file (needed for conditional imports)
+# W503 - line break before binary operator (conflicts with PEP 8 update)
+extend-ignore = E201,E202,E402,W503
+
+# Excluded directories
+exclude =
+    .tox,
+    .git,
+    __pycache__,
+    .pytest_cache,
+    .idea,
+    .vscode,
+    build,
+    dist,
+    *.egg-info,
+    venv,
+    env,
+    .venv
+
+# Per-file ignores (if needed in future)
+# per-file-ignores =
+#     __init__.py:F401
+
+# Show source code for each error
+show-source = True
+
+# Count the number of occurrences of each error/warning code
+count = True
+
+# Print total number of errors
+statistics = True

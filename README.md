@@ -1,5 +1,9 @@
 # OSX File Renamer
 
+![Python Version](https://img.shields.io/badge/python-3.11+-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
+![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)
+
 A command-line tool for automatically renaming invoice and document files based on their content using AI analysis through the Grok API.
 
 ## Overview
@@ -10,7 +14,16 @@ This tool analyzes invoice, statement, and document files using AI (Grok API) to
 
 ⚠️ **Important:** This tool sends the contents of your files to xAI's Grok API for analysis. By using this tool, you acknowledge that file contents (including potentially sensitive financial or personal information) are being transmitted to and processed by external AI services.
 
-Please review xAI's [terms of service](https://x.ai/terms/) and [privacy policy](https://x.ai/privacy/) to understand how your data is handled, stored, and secured before proceeding. If you have concerns about data privacy, consider alternative local processing options.
+**What data is sent:**
+- Complete file contents (text from PDFs, images, or text files)
+- Extracted text and images from documents
+- File metadata (name, type)
+
+**Data not sent:**
+- Files remain on your local system
+- No automatic cloud storage or file retention by this tool
+
+Please review xAI's [terms of service](https://x.ai/terms/) and [privacy policy](https://x.ai/privacy/) to understand how your data is handled, stored, and secured before proceeding. If you have concerns about data privacy, consider alternative local processing options or avoid processing sensitive documents.
 
 ## Features
 
@@ -27,15 +40,24 @@ Please review xAI's [terms of service](https://x.ai/terms/) and [privacy policy]
 ## Prerequisites
 
 ### System Requirements
-- macOS (designed for OSX)
-- Python 3.11 or higher
-- ImageMagick (`brew install imagemagick`)
-- Poppler tools (`brew install poppler`)
-- pngquant (optional, for better compression: `brew install pngquant`)
+- **Operating System**: macOS (designed and tested for OSX)
+- **Python**: 3.11 or higher (managed via pyenv)
+- **ImageMagick**: Required for image processing
+  ```bash
+  brew install imagemagick
+  ```
+- **Poppler**: Required for PDF processing
+  ```bash
+  brew install poppler
+  ```
+- **pngquant**: Optional, improves compression (recommended)
+  ```bash
+  brew install pngquant
+  ```
 
 ### API Requirements
-- Grok API key from xAI
-- Set as environment variable `GROK_API_KEY` or in `~/.env` file
+- **Grok API key** from [xAI](https://x.ai/)
+- Configure via environment variable `GROK_API_KEY` or in `~/.env` file
 
 ## Installation
 
@@ -51,9 +73,13 @@ Please review xAI's [terms of service](https://x.ai/terms/) and [privacy policy]
    pyenv local 3.11
    ```
 
-3. Install dependencies:
+3. Install the package with dependencies:
    ```bash
-   pip install -r requirements.txt
+   # For development (includes testing tools)
+   pip install -e ".[dev]"
+
+   # Or for runtime only
+   pip install -e .
    ```
 
 4. Set up your Grok API key:
@@ -103,16 +129,25 @@ python invoice_renamer.py complex-statement.pdf --all-pages --move-to ./statemen
 
 ## macOS Integration
 
+### Finder Quick Actions
+
 On macOS, you can create a Finder Quick Action shortcut to easily trigger the file renamer directly from the Finder context menu. This allows you to right-click on files and rename them in place without using the command line.
 
-Here's an example shortcut that integrates with this tool: [OSX File Renamer Quick Action](https://www.icloud.com/shortcuts/cd48aad565124fe4b366074fe38a223e)
+**Example Shortcut**: [OSX File Renamer Quick Action](https://www.icloud.com/shortcuts/cd48aad565124fe4b366074fe38a223e)
 
-To use it:
+**To use:**
 1. Open the shortcut link on your Mac
-2. The shortcut automatically renames the selected file(s) in their current location
-3. Add it to your Quick Actions so it appears in Finder's right-click menu
+2. Install the shortcut to your system
+3. The shortcut automatically renames the selected file(s) in their current location
+4. Access it via Finder's right-click menu under Quick Actions
 
-Note: This particular shortcut performs direct renaming. For advanced options like dry-run mode or moving to a target directory, use the command line directly.
+**Note**: The Quick Action performs direct renaming. For advanced options like `--dry-run` mode or moving to a target directory, use the command line interface.
+
+**Creating Your Own Quick Action:**
+You can customize the shortcut to pass different arguments by editing the shell script action:
+```bash
+python3 ~/Documents/Code/osx-file-renamer/invoice_renamer.py "$@" --dry-run
+```
 
 ## Naming Convention
 
@@ -162,39 +197,155 @@ Logs are automatically written to a platform-specific temporary directory (typic
 
 ### Common Issues
 
-1. **API Key Not Found**
-   - Ensure `GROK_API_KEY` is set in environment or `~/.env` file
+#### 1. API Key Not Found
+```
+Error: GROK_API_KEY not found
+```
+**Solution**: Ensure `GROK_API_KEY` is set in environment or `~/.env` file:
+```bash
+echo "GROK_API_KEY=your_api_key_here" >> ~/.env
+# OR
+export GROK_API_KEY=your_api_key_here
+```
 
-2. **File Too Large**
-   - Images/PDFs are automatically compressed if over size limits
-   - For extremely large files, try processing individual pages
+#### 2. File Too Large
+```
+Error: File exceeds maximum size
+```
+**Solution**:
+- Images/PDFs are automatically compressed if over size limits
+- For extremely large files, try `--all-pages` to process incrementally
+- Check that ImageMagick and pngquant are installed for optimal compression
 
-3. **PDF Processing Issues**
-   - Install ImageMagick and Poppler tools
-   - Scanned PDFs will be converted to images automatically
+#### 3. PDF Processing Issues
+```
+Error: Unable to process PDF
+```
+**Solution**:
+- Verify Poppler tools are installed: `which pdftotext pdftoppm`
+- Verify ImageMagick is installed: `which convert`
+- Scanned PDFs automatically convert to images (requires more processing time)
+- Try `--all-pages` flag for complex multi-page documents
 
-4. **Permission Errors**
-   - Ensure write permissions in target directory
-   - Check file is not currently open in another application
+#### 4. Permission Errors
+```
+Error: Permission denied
+```
+**Solution**:
+- Ensure write permissions in target directory: `ls -la`
+- Check file is not currently open in another application
+- Verify you own the file: `ls -l filename`
 
-### Dependencies
+#### 5. Python Version Issues
+```
+Error: Module not found / Syntax error
+```
+**Solution**:
+- Verify Python 3.11+ is active: `python --version`
+- Use pyenv to manage versions: `pyenv local 3.11`
+- Reinstall dependencies: `pip install -e ".[dev]"`
 
-Install system dependencies:
+### System Dependencies
+
+Install all required system dependencies:
 ```bash
 brew install imagemagick poppler pngquant
 ```
 
-### Error Messages
+Verify installation:
+```bash
+convert --version  # ImageMagick
+pdftotext -v       # Poppler
+pngquant --version # pngquant
+```
 
-The tool provides detailed error messages for common issues. Check the log file in your system's temporary directory for additional debugging information.
+### Debug Logging
+
+The tool provides detailed error messages for common issues. Check the log file in your system's temporary directory for additional debugging information:
+
+```bash
+# On macOS/Linux
+tail -f /tmp/invoice_renamer.log
+
+# Or find the temp directory
+python3 -c "import tempfile; print(tempfile.gettempdir())"
+```
+
+### Getting Help
+
+If you encounter issues:
+1. Check the log file for detailed error messages
+2. Verify all prerequisites are installed
+3. Try running with a simple test file first
+4. [Open an issue](https://github.com/the-mace/osx-file-renamer/issues) with log output and steps to reproduce
+
+## Development
+
+### Running Tests
+
+```bash
+# Run all tests
+pyenv exec pytest
+
+# Run with coverage
+pyenv exec pytest --cov=. --cov-report=term-missing
+
+# Run in parallel
+pyenv exec pytest -n auto
+
+# Run specific test file
+pyenv exec pytest tests/test_grok.py
+```
+
+### Code Quality
+
+```bash
+# Check code style
+pyenv exec flake8
+
+# View configuration
+cat .flake8
+```
+
+### Project Structure
+
+```
+osx-file-renamer/
+├── invoice_renamer.py      # Main application logic
+├── grok.py                 # Grok API client and file processing
+├── tests/                  # Test suite
+│   ├── test_grok_*.py     # Grok module tests
+│   ├── test_invoice_*.py  # Invoice renamer tests
+│   ├── conftest.py        # Shared test fixtures
+│   └── fixtures/          # Real test files for integration tests
+├── requirements.txt        # Python dependencies
+├── CLAUDE.md              # AI assistant guidance
+└── README.md              # This file
+```
 
 ## Contributing
 
+Contributions are welcome! Please follow these steps:
+
 1. Fork the repository
-2. Create a feature branch
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Make your changes
-4. Add tests and update documentation
-5. Submit a pull request
+4. Add tests for new functionality
+5. Ensure tests pass: `pyenv exec pytest`
+6. Ensure code style is clean: `pyenv exec flake8`
+7. Update documentation as needed
+8. Commit your changes (`git commit -m 'Add amazing feature'`)
+9. Push to the branch (`git push origin feature/amazing-feature`)
+10. Open a Pull Request
+
+### Development Guidelines
+
+- Use Python 3.11+ features
+- Follow PEP 8 style guide (enforced by flake8)
+- Write tests for new features
+- Update CLAUDE.md if architecture changes
+- Never skip tests in test suite
+- All imports at top of file (no function-level imports)
 
 ## License
 
