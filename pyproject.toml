@@ -27,7 +27,7 @@ keywords = ["invoice", "renamer", "pdf", "ai", "grok", "document-management", "f
 # Runtime dependencies
 dependencies = [
     "titlecase>=2.4.0,<3.0.0",
-    "Pillow>=10.0.0,<12.0.0",
+    "Pillow>=10.0.0,<13.0.0",
 ]
 
 # Optional dependency groups
