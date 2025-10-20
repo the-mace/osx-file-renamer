@@ -22,6 +22,7 @@ This project aims to be welcoming and inclusive. Please be respectful and constr
 ## Getting Started
 
 Before you begin:
+
 - Check existing [issues](https://github.com/the-mace/osx-file-renamer/issues) to see if your bug/feature is already being discussed
 - For major changes, open an issue first to discuss what you'd like to change
 - For minor fixes (typos, small bugs), feel free to submit a PR directly
@@ -33,6 +34,7 @@ Before you begin:
 1. **macOS** (required - this tool is macOS-specific)
 2. **Python 3.11+** (managed with pyenv)
 3. **System dependencies:**
+
    ```bash
    brew install imagemagick poppler pngquant
    ```
@@ -42,12 +44,14 @@ Before you begin:
 1. Fork the repository on GitHub
 
 2. Clone your fork:
+
    ```bash
    git clone https://github.com/the-mace/osx-file-renamer.git
    cd osx-file-renamer
    ```
 
 3. Set up Python environment:
+
    ```bash
    # Install Python 3.11 if not already installed
    pyenv install 3.11
@@ -57,11 +61,13 @@ Before you begin:
    ```
 
 4. Install the package in editable mode with dev dependencies:
+
    ```bash
    pip install -e ".[dev]"
    ```
 
 5. Verify installation:
+
    ```bash
    # Test Python version
    python --version  # Should show 3.11.x
@@ -77,6 +83,7 @@ Before you begin:
    ```
 
 6. Set up Grok API key (for testing with real API calls):
+
    ```bash
    echo "GROK_API_KEY=your_api_key_here" >> ~/.env
    ```
@@ -92,6 +99,7 @@ git checkout -b fix/bug-description
 ```
 
 Branch naming conventions:
+
 - `feature/` - New features
 - `fix/` - Bug fixes
 - `docs/` - Documentation updates
@@ -336,6 +344,7 @@ pyenv exec pytest -m "not slow"
 ### Examples
 
 **Good commit messages:**
+
 ```
 feat: Add support for TIFF image processing
 
@@ -359,6 +368,7 @@ Adds common error scenarios and solutions based on user feedback.
 ```
 
 **Bad commit messages:**
+
 ```
 fix bug          # Too vague
 updated stuff    # What stuff?
@@ -436,7 +446,9 @@ What actually happened.
 
 **Log output:**
 ```
+
 Paste relevant log output from /tmp/invoice_renamer.log
+
 ```
 
 **Additional context**

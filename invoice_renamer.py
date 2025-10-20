@@ -12,7 +12,7 @@ import shutil
 import tempfile
 
 try:
-    from titlecase import titlecase  # type: ignore
+    from titlecase import titlecase  # type: ignore[import-untyped]
 except ImportError:
     # Fallback if titlecase not available
     def titlecase(text):
@@ -518,7 +518,8 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
                 file_ext = os.path.splitext(file_path)[1]
 
                 # Create a hash from the original and target paths for uniqueness
-                unique_hash = hashlib.md5(f"{file_path}->{new_file_path}".encode()).hexdigest()[:8]
+                # MD5 is not used for security here, just for generating a unique filename
+                unique_hash = hashlib.md5(f"{file_path}->{new_file_path}".encode(), usedforsecurity=False).hexdigest()[:8]  # nosec B324
                 temp_path = f"{file_base}.tmp_{unique_hash}{file_ext}"
 
                 logger.debug(f"Using temporary path: {temp_path}")

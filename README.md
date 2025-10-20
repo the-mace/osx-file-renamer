@@ -15,11 +15,13 @@ This tool analyzes invoice, statement, and document files using AI (Grok API) to
 ⚠️ **Important:** This tool sends the contents of your files to xAI's Grok API for analysis. By using this tool, you acknowledge that file contents (including potentially sensitive financial or personal information) are being transmitted to and processed by external AI services.
 
 **What data is sent:**
+
 - Complete file contents (text from PDFs, images, or text files)
 - Extracted text and images from documents
 - File metadata (name, type)
 
 **Data not sent:**
+
 - Files remain on your local system
 - No automatic cloud storage or file retention by this tool
 
@@ -40,40 +42,50 @@ Please review xAI's [terms of service](https://x.ai/terms/) and [privacy policy]
 ## Prerequisites
 
 ### System Requirements
+
 - **Operating System**: macOS (designed and tested for OSX)
 - **Python**: 3.11 or higher (managed via pyenv)
 - **ImageMagick**: Required for image processing
+
   ```bash
   brew install imagemagick
   ```
+
 - **Poppler**: Required for PDF processing
+
   ```bash
   brew install poppler
   ```
+
 - **pngquant**: Optional, improves compression (recommended)
+
   ```bash
   brew install pngquant
   ```
 
 ### API Requirements
+
 - **Grok API key** from [xAI](https://x.ai/)
 - Configure via environment variable `GROK_API_KEY` or in `~/.env` file
 
 ## Installation
 
 1. Clone this repository:
+
    ```bash
    git clone https://github.com/the-mace/osx-file-renamer.git
    cd osx-file-renamer
    ```
 
 2. Set up Python environment with pyenv:
+
    ```bash
    pyenv install 3.11
    pyenv local 3.11
    ```
 
 3. Install the package with dependencies:
+
    ```bash
    # For development (includes testing tools)
    pip install -e ".[dev]"
@@ -83,6 +95,7 @@ Please review xAI's [terms of service](https://x.ai/terms/) and [privacy policy]
    ```
 
 4. Set up your Grok API key:
+
    ```bash
    # Add to ~/.env file or set environment variable
    echo "GROK_API_KEY=your_api_key_here" >> ~/.env
@@ -93,6 +106,7 @@ Please review xAI's [terms of service](https://x.ai/terms/) and [privacy policy]
 ### Basic Usage
 
 Rename a single invoice file:
+
 ```bash
 python invoice_renamer.py path/to/invoice.pdf
 ```
@@ -100,16 +114,19 @@ python invoice_renamer.py path/to/invoice.pdf
 ### Advanced Options
 
 - **Dry Run** (preview changes):
+
   ```bash
   python invoice_renamer.py path/to/invoice.pdf --dry-run
   ```
 
 - **Move to Directory**:
+
   ```bash
   python invoice_renamer.py path/to/invoice.pdf --move-to /path/to/organized/documents
   ```
 
 - **Process All Pages** (for multi-page PDFs):
+
   ```bash
   python invoice_renamer.py path/to/invoice.pdf --all-pages
   ```
@@ -136,6 +153,7 @@ On macOS, you can create a Finder Quick Action shortcut to easily trigger the fi
 **Example Shortcut**: [OSX File Renamer Quick Action](https://www.icloud.com/shortcuts/cd48aad565124fe4b366074fe38a223e)
 
 **To use:**
+
 1. Open the shortcut link on your Mac
 2. Install the shortcut to your system
 3. The shortcut automatically renames the selected file(s) in their current location
@@ -145,6 +163,7 @@ On macOS, you can create a Finder Quick Action shortcut to easily trigger the fi
 
 **Creating Your Own Quick Action:**
 You can customize the shortcut to pass different arguments by editing the shell script action:
+
 ```bash
 python3 ~/Documents/Code/osx-file-renamer/invoice_renamer.py "$@" --dry-run
 ```
@@ -152,11 +171,13 @@ python3 ~/Documents/Code/osx-file-renamer/invoice_renamer.py "$@" --dry-run
 ## Naming Convention
 
 Files are renamed using the following format:
+
 ```
 Business Name [Account-Type] Document-Type [Last4] [- Patient/Animal] [Invoice#] Date
 ```
 
 Examples:
+
 - `Chase Credit Card Statement 20240115.pdf`
 - `Wells Fargo Checking Statement 4567 20240101.pdf`
 - `Tesla Portfolio Statement 20231231.pdf`
@@ -198,10 +219,13 @@ Logs are automatically written to a platform-specific temporary directory (typic
 ### Common Issues
 
 #### 1. API Key Not Found
+
 ```
 Error: GROK_API_KEY not found
 ```
+
 **Solution**: Ensure `GROK_API_KEY` is set in environment or `~/.env` file:
+
 ```bash
 echo "GROK_API_KEY=your_api_key_here" >> ~/.env
 # OR
@@ -209,38 +233,50 @@ export GROK_API_KEY=your_api_key_here
 ```
 
 #### 2. File Too Large
+
 ```
 Error: File exceeds maximum size
 ```
+
 **Solution**:
+
 - Images/PDFs are automatically compressed if over size limits
 - For extremely large files, try `--all-pages` to process incrementally
 - Check that ImageMagick and pngquant are installed for optimal compression
 
 #### 3. PDF Processing Issues
+
 ```
 Error: Unable to process PDF
 ```
+
 **Solution**:
+
 - Verify Poppler tools are installed: `which pdftotext pdftoppm`
 - Verify ImageMagick is installed: `which convert`
 - Scanned PDFs automatically convert to images (requires more processing time)
 - Try `--all-pages` flag for complex multi-page documents
 
 #### 4. Permission Errors
+
 ```
 Error: Permission denied
 ```
+
 **Solution**:
+
 - Ensure write permissions in target directory: `ls -la`
 - Check file is not currently open in another application
 - Verify you own the file: `ls -l filename`
 
 #### 5. Python Version Issues
+
 ```
 Error: Module not found / Syntax error
 ```
+
 **Solution**:
+
 - Verify Python 3.11+ is active: `python --version`
 - Use pyenv to manage versions: `pyenv local 3.11`
 - Reinstall dependencies: `pip install -e ".[dev]"`
@@ -248,11 +284,13 @@ Error: Module not found / Syntax error
 ### System Dependencies
 
 Install all required system dependencies:
+
 ```bash
 brew install imagemagick poppler pngquant
 ```
 
 Verify installation:
+
 ```bash
 convert --version  # ImageMagick
 pdftotext -v       # Poppler
@@ -274,6 +312,7 @@ python3 -c "import tempfile; print(tempfile.gettempdir())"
 ### Getting Help
 
 If you encounter issues:
+
 1. Check the log file for detailed error messages
 2. Verify all prerequisites are installed
 3. Try running with a simple test file first
@@ -354,11 +393,13 @@ This project is open source. See LICENSE file for details.
 ## Changelog
 
 ### Version 1.0.1
+
 - **Security/Fix**: Limit account numbers and invoice numbers to last 4 digits only for privacy and naming consistency
 - **Documentation**: Added data privacy warning about AI data transmission
 - **macOS Integration**: Added guide for using Finder Quick Actions with example shortcut
 
 ### Version 1.0.0
+
 - Initial release
 - AI-powered document analysis
 - Support for multiple file types and document categories

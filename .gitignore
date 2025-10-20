@@ -108,5 +108,8 @@ docs/_build/
 docs/.doctrees/
 site/
 
+# Pre-commit
+.pre-commit-config.yaml.backup
+
 # Project specific
 # Add any project-specific ignore patterns here

@@ -38,6 +38,7 @@ dev = [
     "pytest-cov>=4.0.0,<7.0.0",
     "pytest-xdist>=3.0.0,<4.0.0",
     "flake8>=7.0.0,<8.0.0",
+    "pre-commit>=3.0.0,<5.0.0",
 ]
 test = [
     "pytest>=7.0.0,<9.0.0",
@@ -111,3 +112,16 @@ directory = "htmlcov"
 # Since we have multiple top-level scripts (grok.py, invoice_renamer.py)
 [tool.setuptools]
 py-modules = ["grok", "invoice_renamer"]
+
+# Bandit security linter configuration
+[tool.bandit]
+exclude_dirs = ["tests", ".venv", "venv", "env"]
+skips = [
+    "B101",  # assert_used - we use asserts in tests
+    "B310",  # urllib_urlopen - we're using it for controlled API calls to known endpoints
+    "B404",  # import_subprocess - we need subprocess for calling external tools
+    "B603",  # subprocess_without_shell_equals_true - acceptable for controlled input
+    "B607",  # start_process_with_partial_path - system tools like convert, pdftotext are in PATH
+]
+# Severity level: all, low, medium, high
+severity = "medium"

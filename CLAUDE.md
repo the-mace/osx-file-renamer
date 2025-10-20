@@ -13,6 +13,7 @@ OSX File Renamer is a command-line tool that uses AI (Grok API) to automatically
 **Python Version**: 3.11 (managed with pyenv)
 
 Always use the pyenv environment when running code, tests, or tools:
+
 ```bash
 pyenv exec python <command>
 # or activate environment first
@@ -22,6 +23,7 @@ pyenv shell 3.11
 ## Common Commands
 
 ### Running the Application
+
 ```bash
 # Basic usage - rename a file
 python invoice_renamer.py path/to/file.pdf
@@ -37,6 +39,7 @@ python invoice_renamer.py path/to/file.pdf --all-pages
 ```
 
 ### Testing
+
 ```bash
 # Run all tests
 pyenv exec pytest
@@ -52,6 +55,7 @@ pyenv exec pytest -n auto
 ```
 
 ### Linting
+
 ```bash
 # Check code style
 pyenv exec flake8
@@ -66,6 +70,7 @@ pyenv exec flake8
 ### Core Modules
 
 **invoice_renamer.py** (590 lines)
+
 - Main entry point and orchestration logic
 - Extracts document metadata via grok.py subprocess calls
 - Applies naming conventions and file operations
@@ -73,6 +78,7 @@ pyenv exec flake8
 - Logging with automatic rotation (logs to temp directory)
 
 **grok.py** (700 lines)
+
 - Grok API client for document analysis
 - File processing pipeline: PDF → image extraction/conversion → compression → API call
 - Supports multiple file types: PDFs, images (JPG, PNG, GIF, BMP, WebP, TIFF), text
@@ -95,20 +101,23 @@ pyenv exec flake8
 4. **Size Management**: Multi-stage compression pipeline (PIL optimization → ImageMagick quality reduction → pngquant) to meet API limits
 
 5. **Naming Convention**:
+
    ```
    Business Name [Account-Type] Document-Type [Last4] [- Patient/Animal] [Invoice#] Date
    ```
+
    Examples: "Chase Credit Card Statement 20240115.pdf", "Dr Smith Invoice ACS-1234 20240115.pdf"
 
 ### API Configuration
 
 - API key from environment variable `GROK_API_KEY` or `~/.env` file
 - Models: `grok-4-fast-reasoning` (default), `grok-2-vision-1212` (vision)
-- Endpoint: https://api.x.ai/v1/chat/completions
+- Endpoint: <https://api.x.ai/v1/chat/completions>
 
 ### External Dependencies
 
 System tools required:
+
 - ImageMagick (image compression/conversion)
 - Poppler tools (pdftotext, pdftoppm, pdfimages)
 - pngquant (optional, better compression)
@@ -128,6 +137,7 @@ Python packages: titlecase, pytest, pytest-mock, pytest-cov, pytest-xdist
 ## Testing
 
 Test files in `tests/` directory:
+
 - `test_grok_main.py` - main grok.py functionality
 - `test_grok_file_processing.py` - file processing pipeline
 - `test_grok_api_interaction.py` - API calls
