@@ -31,6 +31,7 @@ def setup_logging():
         if file_size > max_size:
             # Read the last portion of the file
             keep_size = 50 * 1024  # Keep last 50KB
+            data = None
             with open(log_file, 'rb') as f:
                 f.seek(-keep_size, 2)  # Seek from end
                 data = f.read()
@@ -39,10 +40,11 @@ def setup_logging():
                 if first_newline > 0:
                     data = data[first_newline + 1:]
 
-            # Write truncated data back
-            with open(log_file, 'wb') as f:
-                f.write(b'=== LOG TRUNCATED TO PREVENT EXCESSIVE SIZE ===\n')
-                f.write(data)
+            # Write truncated data back (file is already closed from previous block)
+            if data is not None:
+                with open(log_file, 'wb') as f:
+                    f.write(b'=== LOG TRUNCATED TO PREVENT EXCESSIVE SIZE ===\n')
+                    f.write(data)
 
     logging.basicConfig(
         filename=log_file,
@@ -60,8 +62,12 @@ def call_grok_api(prompt, file_path, all_pages=False):
     logger.debug(f"Prompt: {prompt[:200]}...")
 
     try:
+        # Try pyenv python first (for OSX shortcuts), fall back to current interpreter
+        pyenv_python = os.path.expanduser('~/.pyenv/shims/python3')
+        python_executable = pyenv_python if os.path.exists(pyenv_python) else sys.executable
+
         cmd = [
-            os.path.expanduser('~/.pyenv/shims/python3'),
+            python_executable,
             os.path.join(os.path.dirname(__file__), 'grok.py'),
             prompt,
             '--file', file_path
@@ -435,7 +441,14 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
 
     # If target exists and it's not the same file, add numeric suffix before date
     counter = 2
+    max_attempts = 100
     while os.path.exists(new_file_path) and os.path.abspath(new_file_path) != os.path.abspath(file_path):
+        # Safety check at start of loop to prevent infinite iterations
+        if counter > max_attempts:
+            logger.error(f"Too many duplicate files (checked {max_attempts} variations), giving up")
+            print("Error: Too many files with similar names exist", file=sys.stderr)
+            return False
+
         # Extract parts to insert counter before date
         base_name = os.path.splitext(new_filename)[0]
 
@@ -458,12 +471,6 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
 
         new_file_path = os.path.join(target_dir, unique_filename)
         counter += 1
-
-        # Safety check to avoid infinite loop
-        if counter > 100:
-            logger.error("Too many duplicate files, giving up")
-            print("Error: Too many files with similar names exist", file=sys.stderr)
-            return False
 
     new_filename = os.path.basename(new_file_path)
     logger.info(f"New filename: {new_filename}")
@@ -504,6 +511,7 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
             # Same filename but different case - this is a case-only rename
             # On case-insensitive filesystems, we need to do a two-step rename
             logger.info("Performing case-only rename")
+            temp_path = None
             try:
                 # Create unique temporary name based on original filename and timestamp
                 file_base = os.path.splitext(file_path)[0]
@@ -518,7 +526,17 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
                 # Step 1: Rename to temporary name
                 os.rename(file_path, temp_path)
                 # Step 2: Rename to final name
-                os.rename(temp_path, new_file_path)
+                try:
+                    os.rename(temp_path, new_file_path)
+                except OSError as e:
+                    # Rollback: restore original filename
+                    logger.error(f"Step 2 failed, rolling back: {e}")
+                    try:
+                        os.rename(temp_path, file_path)
+                        logger.info("Successfully rolled back to original filename")
+                    except OSError as rollback_error:
+                        logger.error(f"CRITICAL: Rollback failed, file left at: {temp_path}. Error: {rollback_error}")
+                    raise
                 logger.info(f"Successfully case-renamed: {file_path} -> {new_file_path}")
                 if move_to:
                     print(f"Renamed {current_filename} to {target_filename} and moved to {os.path.basename(target_dir)}")
@@ -546,6 +564,10 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
             logger.info(f"Successfully renamed: {file_path} -> {new_file_path}")
             print(f"Renamed {os.path.basename(file_path)} to {os.path.basename(new_file_path)}")
         return True
+    except FileExistsError:
+        logger.error(f"Target file already exists (race condition): {new_file_path}")
+        print(f"Error: Target file '{new_file_path}' already exists", file=sys.stderr)
+        return False
     except OSError as e:
         logger.error(f"Error renaming/moving file: {e}")
         print(f"Error renaming/moving file: {e}", file=sys.stderr)
@@ -570,12 +592,10 @@ def main():
         success = rename_invoice(args.file, args.dry_run, args.move_to, args.all_pages)
         logger.info(f"=== Invoice Renamer Finished - Success: {success} ===")
 
-        # Only exit with error code if it's a critical failure, not just processing errors
         if success:
             sys.exit(0)
         else:
-            # This might be a recoverable error (like file not found, duplicate name), so don't use error code
-            sys.exit(0)
+            sys.exit(1)
     except KeyboardInterrupt:
         logger.warning("Operation interrupted by user")
         print("\nOperation cancelled by user", file=sys.stderr)

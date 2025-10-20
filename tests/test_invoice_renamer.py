@@ -61,7 +61,10 @@ class TestCallGrokApi:
         assert result == "API Response"
         mock_run.assert_called_once()
         args, kwargs = mock_run.call_args
-        assert args[0][0] == os.path.expanduser('~/.pyenv/shims/python3')
+        # Should use pyenv python if it exists, otherwise sys.executable
+        pyenv_python = os.path.expanduser('~/.pyenv/shims/python3')
+        expected_python = pyenv_python if os.path.exists(pyenv_python) else sys.executable
+        assert args[0][0] == expected_python
         assert 'grok.py' in args[0][1]
         assert args[0][2] == "test prompt"
         assert args[0][3] == '--file'
@@ -319,7 +322,7 @@ class TestMain:
         with pytest.raises(SystemExit) as excinfo:
             main()
 
-        assert excinfo.value.code == 0  # Still exits 0 for file errors
+        assert excinfo.value.code == 1  # Exits with error code on failure
 
     @patch('invoice_renamer.setup_logging')
     @patch('sys.argv', ['invoice_renamer.py', '--help'])
