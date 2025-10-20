@@ -268,3 +268,77 @@ class TestLoadEnvFile:
                 load_env_file()
 
                 # Should handle gracefully without crashing
+
+    def test_load_env_file_with_quotes(self, tmp_path):
+        """Test handling of quoted values in .env file."""
+        env_file = tmp_path / ".env"
+        env_file.write_text('KEY1="value with spaces"\nKEY2=\'single quotes\'\n')
+
+        with patch('os.path.expanduser', return_value=str(env_file)):
+            # Clear any existing values
+            if 'KEY1' in os.environ:
+                del os.environ['KEY1']
+            if 'KEY2' in os.environ:
+                del os.environ['KEY2']
+
+            load_env_file()
+
+            # Values should be set without quotes
+            assert os.environ.get('KEY1') == 'value with spaces'
+            assert os.environ.get('KEY2') == 'single quotes'
+
+            # Cleanup
+            if 'KEY1' in os.environ:
+                del os.environ['KEY1']
+            if 'KEY2' in os.environ:
+                del os.environ['KEY2']
+
+    def test_load_env_file_with_embedded_equals(self, tmp_path):
+        """Test handling of values containing = signs."""
+        env_file = tmp_path / ".env"
+        env_file.write_text('DATABASE_URL=postgresql://user:pass=word@localhost/db\n')
+
+        with patch('os.path.expanduser', return_value=str(env_file)):
+            if 'DATABASE_URL' in os.environ:
+                del os.environ['DATABASE_URL']
+
+            load_env_file()
+
+            assert os.environ.get('DATABASE_URL') == 'postgresql://user:pass=word@localhost/db'
+
+            if 'DATABASE_URL' in os.environ:
+                del os.environ['DATABASE_URL']
+
+    def test_load_env_file_doesnt_overwrite_existing(self, tmp_path):
+        """Test that existing environment variables aren't overwritten."""
+        env_file = tmp_path / ".env"
+        env_file.write_text('EXISTING_VAR=new_value\n')
+
+        # Set existing value
+        os.environ['EXISTING_VAR'] = 'original_value'
+
+        with patch('os.path.expanduser', return_value=str(env_file)):
+            load_env_file()
+
+            # Should keep original value
+            assert os.environ.get('EXISTING_VAR') == 'original_value'
+
+            # Cleanup
+            del os.environ['EXISTING_VAR']
+
+    def test_load_env_file_with_comments_and_empty_lines(self, tmp_path):
+        """Test handling of comments and empty lines."""
+        env_file = tmp_path / ".env"
+        env_file.write_text('# This is a comment\n\nKEY=value\n  \n# Another comment\n')
+
+        with patch('os.path.expanduser', return_value=str(env_file)):
+            if 'KEY' in os.environ:
+                del os.environ['KEY']
+
+            load_env_file()
+
+            # Only KEY should be set
+            assert os.environ.get('KEY') == 'value'
+
+            if 'KEY' in os.environ:
+                del os.environ['KEY']

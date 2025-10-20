@@ -1,0 +1,19 @@
+Invoice
+
+ACME Corporation
+123 Main Street
+City, ST 12345
+
+Invoice #: INV-2024-001
+Date: January 15, 2024
+
+BILL TO:
+John Doe
+456 Oak Avenue
+
+DESCRIPTION          AMOUNT
+Service Fee          $100.00
+----------------------------
+TOTAL               $100.00
+
+Thank you for your business!
