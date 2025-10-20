@@ -123,6 +123,7 @@ def compress_image(file_path: str, original_data: bytes, max_size: int) -> Optio
         # Method 1: Try converting to JPEG with quality reduction (if not already JPEG)
         if file_ext in COMPRESSED_FORMATS:
             for quality in [85, 70, 50, 30]:
+                temp_path = None
                 try:
                     # Use ImageMagick convert if available
                     with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
@@ -134,23 +135,33 @@ def compress_image(file_path: str, original_data: bytes, max_size: int) -> Optio
                     if result.returncode == 0 and os.path.exists(temp_path):
                         with open(temp_path, 'rb') as f:
                             compressed_data = f.read()
-                        os.unlink(temp_path)
+                        try:
+                            os.unlink(temp_path)
+                        except FileNotFoundError:
+                            pass
 
                         if len(compressed_data) <= max_size:
                             print(f"Compressed to JPEG quality {quality}: {len(compressed_data):,} bytes", file=sys.stderr)
                             return compressed_data
                     else:
-                        if os.path.exists(temp_path):
-                            os.unlink(temp_path)
+                        if temp_path:
+                            try:
+                                os.unlink(temp_path)
+                            except FileNotFoundError:
+                                pass
 
                 except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
-                    if os.path.exists(temp_path):
-                        os.unlink(temp_path)
+                    if temp_path:
+                        try:
+                            os.unlink(temp_path)
+                        except FileNotFoundError:
+                            pass
                     continue
 
         # Method 2: For JPEG files, try re-compressing with lower quality
         elif file_ext in ['.jpg', '.jpeg']:
             for quality in [70, 50, 30, 20]:
+                temp_path = None
                 try:
                     with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
                         temp_path = tmp_file.name
@@ -161,22 +172,32 @@ def compress_image(file_path: str, original_data: bytes, max_size: int) -> Optio
                     if result.returncode == 0 and os.path.exists(temp_path):
                         with open(temp_path, 'rb') as f:
                             compressed_data = f.read()
-                        os.unlink(temp_path)
+                        try:
+                            os.unlink(temp_path)
+                        except FileNotFoundError:
+                            pass
 
                         if len(compressed_data) <= max_size:
                             print(f"Recompressed JPEG to quality {quality}: {len(compressed_data):,} bytes", file=sys.stderr)
                             return compressed_data
                     else:
-                        if os.path.exists(temp_path):
-                            os.unlink(temp_path)
+                        if temp_path:
+                            try:
+                                os.unlink(temp_path)
+                            except FileNotFoundError:
+                                pass
 
                 except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
-                    if os.path.exists(temp_path):
-                        os.unlink(temp_path)
+                    if temp_path:
+                        try:
+                            os.unlink(temp_path)
+                        except FileNotFoundError:
+                            pass
                     continue
 
         # Method 3: Try scaling down the image
         for scale in ['75%', '50%', '25%']:
+            temp_path = None
             try:
                 with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
                     temp_path = tmp_file.name
@@ -187,18 +208,27 @@ def compress_image(file_path: str, original_data: bytes, max_size: int) -> Optio
                 if result.returncode == 0 and os.path.exists(temp_path):
                     with open(temp_path, 'rb') as f:
                         compressed_data = f.read()
-                    os.unlink(temp_path)
+                    try:
+                        os.unlink(temp_path)
+                    except FileNotFoundError:
+                        pass
 
                     if len(compressed_data) <= max_size:
                         print(f"Scaled to {scale} and compressed: {len(compressed_data):,} bytes", file=sys.stderr)
                         return compressed_data
                 else:
-                    if os.path.exists(temp_path):
-                        os.unlink(temp_path)
+                    if temp_path:
+                        try:
+                            os.unlink(temp_path)
+                        except FileNotFoundError:
+                            pass
 
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
-                if os.path.exists(temp_path):
-                    os.unlink(temp_path)
+                if temp_path:
+                    try:
+                        os.unlink(temp_path)
+                    except FileNotFoundError:
+                        pass
                 continue
 
         print("Warning: Could not compress image below size limit", file=sys.stderr)
@@ -272,10 +302,11 @@ def extract_embedded_images(file_path, all_pages=False):
                                     # Check if image might be inverted (mostly black background)
                                     if img.mode == 'L':
                                         pixels = list(img.getdata())
-                                        avg_brightness = sum(pixels) / len(pixels)
-                                        # If image is very dark (avg < 50), it might be inverted
-                                        if avg_brightness < 50:
-                                            img = PIL.ImageOps.invert(img)
+                                        if len(pixels) > 0:
+                                            avg_brightness = sum(pixels) / len(pixels)
+                                            # If image is very dark (avg < 50), it might be inverted
+                                            if avg_brightness < 50:
+                                                img = PIL.ImageOps.invert(img)
 
                                     img.save(png_file, 'PNG', optimize=True)
                                     img_file = png_file
@@ -304,7 +335,13 @@ def extract_embedded_images(file_path, all_pages=False):
                                     print(f"Warning: ImageMagick conversion failed: {e}. No PIL available.", file=sys.stderr)
                                     mime_type = "image/png"  # Try PNG mime type anyway
                         else:
-                            mime_type = f"image/{ext_lower}" if ext_lower else "image/jpeg"
+                            # For known image types, use the extension; otherwise default to jpeg
+                            if ext_lower in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'tif']:
+                                mime_type = f"image/{ext_lower}"
+                            else:
+                                # Unknown format, log warning and use jpeg as fallback
+                                print(f"Warning: Unknown image extension '{ext_lower}', using image/jpeg as fallback", file=sys.stderr)
+                                mime_type = "image/jpeg"
 
                         return process_image_file(img_file, mime_type)
 
@@ -398,7 +435,7 @@ def convert_pdf_to_images(file_path, max_pages=5):
 
                     # Try pngquant first (best compression for text)
                     pngquant_result = subprocess.run(['pngquant', '--force', '--output', compressed_path, actual_image_path],
-                                                     capture_output=True)
+                                                     capture_output=True, timeout=COMPRESSION_TIMEOUT)
 
                     if pngquant_result.returncode == 0 and os.path.exists(compressed_path):
                         # Use compressed version if it's smaller
@@ -407,7 +444,10 @@ def convert_pdf_to_images(file_path, max_pages=5):
                         if len(compressed_data) < len(file_data):
                             file_data = compressed_data
                             print(f"Compressed to {len(file_data):,} bytes", file=sys.stderr)
-                        os.unlink(compressed_path)
+                        try:
+                            os.unlink(compressed_path)
+                        except FileNotFoundError:
+                            pass
                     else:
                         # Fallback: try progressively lower DPI until we get under the limit
                         for dpi in [100, 75, 50]:
@@ -422,13 +462,18 @@ def convert_pdf_to_images(file_path, max_pages=5):
                                 if os.path.exists(low_dpi_actual):
                                     with open(low_dpi_actual, 'rb') as f:
                                         test_data = f.read()
-                                    os.unlink(low_dpi_actual)
+                                    try:
+                                        os.unlink(low_dpi_actual)
+                                    except FileNotFoundError:
+                                        pass
                                     print(f"DPI {dpi} version: {len(test_data):,} bytes", file=sys.stderr)
                                     if len(test_data) <= MAX_RAW_SIZE:
                                         file_data = test_data
                                         break
                                     elif dpi == 50:
-                                        # This is our last attempt
+                                        # This is our last attempt - use it even if oversized
+                                        # The final hard check below will handle the error
+                                        print(f"Warning: Even at lowest DPI (50), image is {len(test_data):,} bytes", file=sys.stderr)
                                         file_data = test_data
                             except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
                                 continue
@@ -459,7 +504,10 @@ def convert_pdf_to_images(file_path, max_pages=5):
             })
 
             # Clean up temporary file
-            os.unlink(actual_image_path)
+            try:
+                os.unlink(actual_image_path)
+            except FileNotFoundError:
+                pass
             page_num += 1
 
         if not image_content:
@@ -527,7 +575,7 @@ def read_file_content(file_path, all_pages=False):
                 # Check if meaningful text was extracted (more than just whitespace/control chars)
                 meaningful_text = ''.join(c for c in text_content if c.isprintable() and not c.isspace())
 
-                if len(meaningful_text) < 10:  # Less than 10 printable characters suggests scanned PDF
+                if len(meaningful_text) < MIN_MEANINGFUL_TEXT:  # Less than MIN_MEANINGFUL_TEXT printable characters suggests scanned PDF
                     print(f"PDF appears to be scanned (minimal text extracted: {len(meaningful_text)} chars). Trying image extraction first...", file=sys.stderr)
                     # Try extracting embedded images first (faster for PDFs with embedded images)
                     extracted_image = extract_embedded_images(file_path, all_pages=all_pages)
@@ -602,11 +650,11 @@ def call_grok_api(prompt, model="grok-4-fast-reasoning", file_path=None, all_pag
         print("Error: GROK_API_KEY not found in environment or ~/.env file", file=sys.stderr)
         sys.exit(1)
 
-    url = "https://api.x.ai/v1/chat/completions"
+    url = API_URL
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": USER_AGENT
     }
 
     # Build message content
@@ -665,6 +713,17 @@ def call_grok_api(prompt, model="grok-4-fast-reasoning", file_path=None, all_pag
         with urllib.request.urlopen(req) as response:
             response_data = response.read().decode('utf-8')
             result = json.loads(response_data)
+
+            # Validate response structure
+            if "choices" not in result:
+                raise KeyError("Response missing 'choices' key")
+            if not isinstance(result["choices"], list) or len(result["choices"]) == 0:
+                raise IndexError("Response 'choices' is empty or not a list")
+            if "message" not in result["choices"][0]:
+                raise KeyError("Response missing 'message' key in choices[0]")
+            if "content" not in result["choices"][0]["message"]:
+                raise KeyError("Response missing 'content' key in message")
+
             return result["choices"][0]["message"]["content"]
 
     except urllib.error.HTTPError as e:
