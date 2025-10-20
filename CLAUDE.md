@@ -141,3 +141,5 @@ Key fixtures: `sample_jpeg_data`, `temp_file_cleanup`, `mock_env_file`, `mock_ur
 
 - Logs: Platform-specific temp directory (e.g., `/tmp/invoice_renamer.log`)
 - API key: Environment variable or `~/.env` file in home directory
+- Invoice renamer is run via a OSX shortcut, like this "python3 ~/Documents/Code/osx-file-renamer/invoice_renamer.py "Repeat Item (File Path)"", be sure after making changes that could impact that you test for that exact execution approach.
+- If claude memory / claude.md has changed, when its time to commit the code include the claude.md in the commit

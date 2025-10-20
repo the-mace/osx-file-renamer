@@ -78,3 +78,45 @@ def mock_urllib_response():
         return MockResponse(json.dumps(json_data).encode('utf-8'))
 
     return create_response
+
+
+@pytest.fixture
+def sample_invoice_info():
+    """Standard invoice metadata for testing."""
+    return {
+        'business_name': 'Test Company',
+        'document_type': 'Invoice',
+        'invoice_date': '2024-01-15',
+        'invoice_number': '1234',
+        'patient_animal_name': None,
+        'account_type': None,
+        'account_last_4': None
+    }
+
+
+@pytest.fixture
+def sample_statement_info():
+    """Standard statement metadata for testing."""
+    return {
+        'business_name': 'Chase Bank',
+        'document_type': 'Statement',
+        'invoice_date': '2024-01-15',
+        'invoice_number': None,
+        'patient_animal_name': None,
+        'account_type': 'Credit Card',
+        'account_last_4': '5678'
+    }
+
+
+@pytest.fixture
+def sample_vet_invoice_info():
+    """Veterinary invoice metadata for testing."""
+    return {
+        'business_name': 'Veterinary Clinic',
+        'document_type': 'Invoice',
+        'invoice_date': '2024-01-15',
+        'invoice_number': '9876',
+        'patient_animal_name': 'Fluffy',
+        'account_type': None,
+        'account_last_4': None
+    }
