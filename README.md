@@ -434,20 +434,8 @@ make lint
 
 ## License
 
-This project is open source. See LICENSE file for details.
+This project is open source. See the [LICENSE](LICENSE) file for details.
 
-## Changelog
+## Version History
 
-### Version 1.0.1
-
-- **Security/Fix**: Limit account numbers and invoice numbers to last 4 digits only for privacy and naming consistency
-- **Documentation**: Added data privacy warning about AI data transmission
-- **macOS Integration**: Added guide for using Finder Quick Actions with example shortcut
-
-### Version 1.0.0
-
-- Initial release
-- AI-powered document analysis
-- Support for multiple file types and document categories
-- Intelligent naming conventions
-- Dry run and batch processing capabilities
+See the [git commit history](https://github.com/the-mace/osx-file-renamer/commits/main) for detailed changes and release notes.
