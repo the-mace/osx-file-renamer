@@ -1,6 +1,6 @@
 # Test Fixtures
 
-This directory contains real test files for integration testing of grok.py.
+This directory contains real test files for integration testing of llm_client.py.
 
 ## Files
 

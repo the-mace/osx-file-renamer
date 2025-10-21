@@ -1,5 +1,5 @@
 """
-Integration tests for grok.py using real PDF and image files.
+Integration tests for llm_client.py using real PDF and image files.
 
 These tests use actual files in tests/fixtures/ to verify that the complete
 pipeline works end-to-end without mocking.

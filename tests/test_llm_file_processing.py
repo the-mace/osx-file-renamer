@@ -4,7 +4,7 @@ import base64
 import subprocess
 from unittest.mock import patch, MagicMock
 
-# Import the functions to test from grok.py
+# Import the functions to test from llm_client.py
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
