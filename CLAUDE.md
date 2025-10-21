@@ -195,3 +195,4 @@ Key fixtures: `sample_jpeg_data`, `temp_file_cleanup`, `mock_env_file`
 - Installation: Uses system Python at `/usr/local/bin/python3` to install, creates command at `/Library/Frameworks/Python.framework/Versions/3.11/bin/invoice-renamer`, symlinked from `/usr/local/bin/invoice-renamer`
 - OSX Shortcuts: Invoke as `invoice-renamer "Repeat Item (File Path)"` - the symlink in `/usr/local/bin` makes the command available in PATH
 - If CLAUDE.md has changed, include it in the commit when code changes are committed
+- when updating this project you should also bump the version in pyproject.toml
