@@ -409,28 +409,28 @@ osx-file-renamer/
 
 ## Contributing
 
-Contributions are welcome! Please follow these steps:
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines on:
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Install dev dependencies: `make install-dev`
-4. Make your changes
-5. Add tests for new functionality
-6. Ensure tests pass: `make test`
-7. Ensure code style is clean: `make lint`
-8. Update documentation as needed
-9. Commit your changes (`git commit -m 'Add amazing feature'`)
-10. Push to the branch (`git push origin feature/amazing-feature`)
-11. Open a Pull Request
+- Setting up your development environment
+- Code style and standards
+- Testing requirements
+- Pull request process
+- Project architecture and conventions
 
-### Development Guidelines
+Quick start for contributors:
 
-- Use Python 3.11+ features
-- Follow PEP 8 style guide (enforced by flake8)
-- Write tests for new features
-- Update CLAUDE.md if architecture changes
-- Never skip tests in test suite
-- All imports at top of file (no function-level imports)
+```bash
+# Fork and clone the repository
+git clone https://github.com/YOUR_USERNAME/osx-file-renamer.git
+cd osx-file-renamer
+
+# Install dev dependencies
+make install-dev
+
+# Run tests and linting
+make test
+make lint
+```
 
 ## License
 
