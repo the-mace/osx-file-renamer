@@ -49,7 +49,7 @@ class TestSetupLogging:
         assert mock_file.call_count >= 2
 
 
-class TestCallGrokApi:
+class TestCallLLMApi:
 
     @patch('invoice_renamer.subprocess.run')
     def test_call_llm_api_success(self, mock_run):

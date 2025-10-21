@@ -1,4 +1,4 @@
-.PHONY: help install install-dev test test-cov test-fast lint clean run-invoice run-grok check all coverage-html uninstall reinstall
+.PHONY: help install install-dev test test-cov test-fast lint clean run-invoice run-llm check all coverage-html uninstall reinstall
 
 # Colors for output
 BLUE := \033[36m

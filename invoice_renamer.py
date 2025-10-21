@@ -247,7 +247,7 @@ If you cannot find any piece of information, use null for that field."""
 
         return parsed_info
     except json.JSONDecodeError as e:
-        logger.error(f"Could not parse Grok response as JSON: {e}")
+        logger.error(f"Could not parse LLM response as JSON: {e}")
         logger.error(f"Response was: {response}")
         logger.warning("Using fallback values due to JSON parsing error")
         # Log detailed environment info for "Unknown Document" debugging
