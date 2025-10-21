@@ -16,31 +16,60 @@ help:  ## Show this help message
 	@echo "  make all           # Run full check (clean, lint, test)"
 
 install:  ## Install package with runtime dependencies only
-	pyenv exec pip install -e .
+	@echo "$(BLUE)Installing osx-file-renamer...$(RESET)"
+	@# Use system Python bypassing pyenv
+	/usr/local/bin/python3 -m pip install -e . || python3 -m pip install -e .
+	@echo ""
+	@# Create symlink in /usr/local/bin so it's in PATH
+	@echo "$(BLUE)Creating symlink in /usr/local/bin...$(RESET)"
+	@INSTALLED_PATH=$$(find /Library/Frameworks/Python.framework/Versions/*/bin/invoice-renamer 2>/dev/null | head -1); \
+	if [ -n "$$INSTALLED_PATH" ]; then \
+		if sudo -n ln -sf "$$INSTALLED_PATH" /usr/local/bin/invoice-renamer 2>/dev/null; then \
+			echo "  ✓ Symlink created: /usr/local/bin/invoice-renamer -> $$INSTALLED_PATH"; \
+		else \
+			echo "  ⚠ Symlink creation requires sudo password. Please run:"; \
+			echo ""; \
+			echo "    sudo ln -sf \"$$INSTALLED_PATH\" /usr/local/bin/invoice-renamer"; \
+			echo ""; \
+		fi \
+	else \
+		echo "  Warning: Could not find installed invoice-renamer command"; \
+	fi
+	@echo ""
+	@echo "$(BLUE)✓ Installed!$(RESET)"
+	@echo ""
+	@echo "Usage:"
+	@echo "  invoice-renamer ~/Downloads/file.pdf"
+	@echo ""
+	@echo "For OSX Shortcuts, use:"
+	@echo "  invoice-renamer"
 
 install-dev:  ## Install package in editable mode with dev dependencies
-	pyenv exec pip install -e ".[dev]"
+	@echo "$(BLUE)Installing with dev dependencies...$(RESET)"
+	pip install -e ".[dev]"
+	@echo ""
+	@echo "$(BLUE)✓ Dev environment ready!$(RESET)"
 
 test:  ## Run all tests
-	pyenv exec pytest -v
+	pytest -v
 
 test-cov:  ## Run tests with coverage report
-	pyenv exec pytest --cov=. --cov-report=term-missing --cov-report=html
+	pytest --cov=. --cov-report=term-missing --cov-report=html
 	@echo ""
 	@echo "$(BLUE)Coverage report generated in htmlcov/index.html$(RESET)"
 
 test-fast:  ## Run tests in parallel (faster)
-	pyenv exec pytest -n auto
+	pytest -n auto
 
 test-integration:  ## Run only integration tests
-	pyenv exec pytest -v -m integration
+	pytest -v -m integration
 
 test-watch:  ## Run tests and watch for changes (requires pytest-watch)
-	pyenv exec ptw -- -v
+	ptw -- -v
 
 lint:  ## Check code style with flake8
 	@echo "$(BLUE)Running flake8...$(RESET)"
-	@pyenv exec flake8 || (echo "$(BLUE)Linting failed. Fix errors before committing.$(RESET)" && exit 1)
+	@flake8 || (echo "$(BLUE)Linting failed. Fix errors before committing.$(RESET)" && exit 1)
 	@echo "$(BLUE)✓ Linting passed!$(RESET)"
 
 clean:  ## Clean up temporary files and caches
@@ -58,15 +87,15 @@ run-invoice:  ## Run invoice renamer (usage: make run-invoice FILE=path/to/file.
 		echo "Optional: make run-invoice FILE=path/to/file.pdf DRY_RUN=--dry-run"; \
 		exit 1; \
 	fi
-	pyenv exec python invoice_renamer.py $(FILE) $(DRY_RUN)
+	python3 invoice_renamer.py $(FILE) $(DRY_RUN)
 
-run-grok:  ## Run grok CLI (usage: make run-grok PROMPT="your prompt")
+run-llm:  ## Run LLM client (usage: make run-llm PROMPT="your prompt")
 	@if [ -z "$(PROMPT)" ]; then \
-		echo "Usage: make run-grok PROMPT=\"your prompt here\""; \
-		echo "Optional: make run-grok PROMPT=\"analyze this\" FILE=test.pdf"; \
+		echo "Usage: make run-llm PROMPT=\"your prompt here\""; \
+		echo "Optional: make run-llm PROMPT=\"analyze this\" FILE=test.pdf"; \
 		exit 1; \
 	fi
-	pyenv exec python grok.py $(if $(FILE),--file $(FILE)) "$(PROMPT)"
+	python3 llm_client.py $(if $(FILE),--file $(FILE)) "$(PROMPT)"
 
 check: lint test  ## Run linting and tests (quick check before commit)
 	@echo ""
@@ -81,7 +110,7 @@ coverage-html: test-cov  ## Generate HTML coverage report and open it
 	@open htmlcov/index.html 2>/dev/null || xdg-open htmlcov/index.html 2>/dev/null || echo "Open htmlcov/index.html manually"
 
 uninstall:  ## Uninstall the package
-	pyenv exec pip uninstall -y osx-file-renamer
+	/usr/local/bin/python3 -m pip uninstall -y osx-file-renamer || python3 -m pip uninstall -y osx-file-renamer
 
 reinstall: uninstall install-dev  ## Reinstall the package in editable mode
 	@echo "$(BLUE)✓ Package reinstalled!$(RESET)"

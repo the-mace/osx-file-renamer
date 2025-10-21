@@ -744,7 +744,7 @@ class TestFormatDateEdgeCases:
 class TestExtractInvoiceInfoEdgeCases:
     """Test edge cases for extract_invoice_info function."""
 
-    @patch('invoice_renamer.call_grok_api')
+    @patch('invoice_renamer.call_llm_api')
     def test_extract_invoice_info_json_in_text(self, mock_call_api):
         """Test JSON extraction from text with markdown."""
         json_response = {
@@ -762,7 +762,7 @@ class TestExtractInvoiceInfoEdgeCases:
 
         assert result["business_name"] == "Test Co"
 
-    @patch('invoice_renamer.call_grok_api')
+    @patch('invoice_renamer.call_llm_api')
     def test_extract_invoice_info_null_string_conversion(self, mock_call_api):
         """Test that string 'null' gets converted to None."""
         json_response = {
@@ -783,7 +783,7 @@ class TestExtractInvoiceInfoEdgeCases:
                 # We're testing the null conversion happens in rename_invoice
                 # This test verifies the info dict gets cleaned
 
-    @patch('invoice_renamer.call_grok_api')
+    @patch('invoice_renamer.call_llm_api')
     def test_extract_invoice_info_missing_document_type_fallback(self, mock_call_api):
         """Test fallback when document_type is missing."""
         json_response = {
@@ -801,7 +801,7 @@ class TestExtractInvoiceInfoEdgeCases:
 
         assert result["document_type"] == "Document"
 
-    @patch('invoice_renamer.call_grok_api')
+    @patch('invoice_renamer.call_llm_api')
     def test_extract_invoice_info_portfolio_no_warning(self, mock_call_api):
         """Test portfolio type doesn't trigger partial data warning."""
         json_response = {
@@ -820,7 +820,7 @@ class TestExtractInvoiceInfoEdgeCases:
 
         assert result["account_type"] == "Portfolio"
 
-    @patch('invoice_renamer.call_grok_api')
+    @patch('invoice_renamer.call_llm_api')
     def test_extract_invoice_info_complete_json_fallback(self, mock_call_api):
         """Test fallback to parsing entire response as JSON."""
         json_response = {

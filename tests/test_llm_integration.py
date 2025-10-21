@@ -10,7 +10,7 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from grok import (
+from llm_client import (
     read_file_content,
     process_image_file,
     extract_embedded_images,
@@ -110,7 +110,7 @@ class TestImageProcessing:
 
         # Verify base64 doesn't exceed limits
         base64_part = result["image_url"]["url"].split(",")[1]
-        from grok import MAX_BASE64_SIZE
+        from llm_client import MAX_BASE64_SIZE
         assert len(base64_part) <= MAX_BASE64_SIZE
 
 

@@ -4,61 +4,76 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OSX File Renamer is a command-line tool that uses AI (Grok API) to automatically rename invoice and document files based on their content. It analyzes documents to extract business names, document types, dates, and other metadata, then applies consistent naming conventions.
+OSX File Renamer is a command-line tool that uses AI (LLM APIs via LiteLLM) to automatically rename invoice and document files based on their content. It analyzes documents to extract business names, document types, dates, and other metadata, then applies consistent naming conventions.
 
-**Data Privacy Note**: This tool sends file contents to xAI's Grok API for analysis.
+**Data Privacy Note**: This tool sends file contents to your chosen LLM provider for analysis. Supported providers include Anthropic (Claude), OpenAI (GPT), xAI (Grok), Google (Gemini), and 100+ others via LiteLLM. You choose your preferred provider by setting the appropriate API key.
 
 ## Development Environment
 
-**Python Version**: 3.11 (managed with pyenv)
+**Python Version**: 3.11+ required
 
-Always use the pyenv environment when running code, tests, or tools:
+The tool can be used in two ways:
+
+1. **Installed command** (recommended for users): `make install` creates the `invoice-renamer` command available system-wide
+2. **Direct execution** (for development): Run `python3 invoice_renamer.py` directly from the repo
+
+Install dependencies:
 
 ```bash
-pyenv exec python <command>
-# or activate environment first
-pyenv shell 3.11
+make install      # Install as command (for end users and OSX shortcuts)
+# or
+make install-dev  # Install in editable mode with dev dependencies (for developers)
 ```
 
 ## Common Commands
 
 ### Running the Application
 
+**Production Use (Installed Command):**
+
 ```bash
-# Basic usage - rename a file
-python invoice_renamer.py path/to/file.pdf
+# One-time setup - installs to system Python and creates /usr/local/bin/invoice-renamer symlink
+make install
+sudo ln -sf "/Library/Frameworks/Python.framework/Versions/3.11/bin/invoice-renamer" /usr/local/bin/invoice-renamer
 
-# Dry run (preview without changes)
-python invoice_renamer.py path/to/file.pdf --dry-run
+# Run from anywhere (including OSX shortcuts)
+invoice-renamer ~/Downloads/file.pdf
+invoice-renamer ~/Downloads/file.pdf --dry-run
+invoice-renamer ~/Downloads/file.pdf --move-to /target/dir
+```
 
-# Move to target directory
-python invoice_renamer.py path/to/file.pdf --move-to /target/dir
+**Development/Testing (Direct Execution):**
 
-# Process all pages of PDF
-python invoice_renamer.py path/to/file.pdf --all-pages
+From the repo directory for quick testing without installation:
+
+```bash
+cd ~/Documents/Code/osx-file-renamer
+python3 invoice_renamer.py path/to/file.pdf --dry-run
 ```
 
 ### Testing
 
 ```bash
 # Run all tests
-pyenv exec pytest
+make test
+# or: pytest -v
 
 # Run specific test file
-pyenv exec pytest tests/test_grok.py
+pytest tests/test_llm_main.py
 
 # Run with coverage
-pyenv exec pytest --cov=. --cov-report=term-missing
+make test-cov
 
-# Run in parallel
-pyenv exec pytest -n auto
+# Run in parallel (faster)
+make test-fast
 ```
 
 ### Linting
 
 ```bash
 # Check code style
-pyenv exec flake8
+make lint
+# or: flake8
 
 # Configuration in .flake8:
 # - Max line length: 180
@@ -72,23 +87,24 @@ pyenv exec flake8
 **invoice_renamer.py** (590 lines)
 
 - Main entry point and orchestration logic
-- Extracts document metadata via grok.py subprocess calls
+- Extracts document metadata via llm_client.py subprocess calls
 - Applies naming conventions and file operations
 - Handles dry-run mode, file moves, and conflict resolution
 - Logging with automatic rotation (logs to temp directory)
 
-**grok.py** (700 lines)
+**llm_client.py** (700 lines)
 
-- Grok API client for document analysis
+- LLM API client for document analysis (supports Claude, GPT-4, Grok, Gemini, and 100+ models via LiteLLM)
 - File processing pipeline: PDF → image extraction/conversion → compression → API call
 - Supports multiple file types: PDFs, images (JPG, PNG, GIF, BMP, WebP, TIFF), text
 - Image compression to meet API size limits (10MB base64)
-- Constants defined at top: MAX_RAW_SIZE, MAX_BASE64_SIZE, timeouts, API endpoints
-- Custom exceptions: GrokError, FileProcessingError, APIError
+- Constants defined at top: MAX_RAW_SIZE, MAX_BASE64_SIZE, timeouts, DEFAULT_MODEL
+- Custom exceptions: LLMClientError, FileProcessingError, APIError
+- Automatically selects vision models when processing images
 
 ### Key Architecture Patterns
 
-1. **Subprocess Communication**: invoice_renamer.py calls grok.py as subprocess rather than importing it directly. This isolation helps with error handling and allows independent execution.
+1. **Subprocess Communication**: invoice_renamer.py calls llm_client.py as subprocess rather than importing it directly. This isolation helps with error handling and allows independent execution.
 
 2. **PDF Processing Pipeline**:
    - Text extraction via pdftotext (fast path for text-based PDFs)
@@ -110,9 +126,34 @@ pyenv exec flake8
 
 ### API Configuration
 
-- API key from environment variable `GROK_API_KEY` or `~/.env` file
-- Models: `grok-4-fast-reasoning` (default), `grok-2-vision-1212` (vision)
-- Endpoint: <https://api.x.ai/v1/chat/completions>
+The tool uses LiteLLM for flexible LLM provider support. Configuration via environment variables in `~/.env` file:
+
+**API Keys** (provider-specific, choose one or more):
+
+- `ANTHROPIC_API_KEY` - For Claude models (Anthropic)
+- `OPENAI_API_KEY` - For GPT models (OpenAI)
+- `GOOGLE_API_KEY` - For Gemini models (Google)
+- `GROK_API_KEY` - For Grok models (xAI)
+- Other provider keys as supported by LiteLLM (100+ providers)
+
+**Model Selection**:
+
+- `LLM_MODEL` - Default model to use (optional, defaults to `grok-beta` if `GROK_API_KEY` is set)
+- Examples: `claude-3-5-sonnet-20241022`, `gpt-4`, `gemini-pro`, `grok-beta`
+
+**Model Auto-Selection**:
+
+- Text models used for text-based PDFs and text files
+- Vision models automatically selected for images and scanned PDFs
+- Legacy model names automatically converted to LiteLLM format for backward compatibility
+
+**Supported Model Families**:
+
+- Claude: `claude-3-5-sonnet-20241022`, `claude-3-opus-20240229` (Anthropic)
+- GPT: `gpt-4`, `gpt-4-turbo`, `gpt-4-vision-preview` (OpenAI)
+- Gemini: `gemini-pro`, `gemini-pro-vision` (Google)
+- Grok: `grok-beta`, `grok-vision-beta` (xAI)
+- 100+ more via LiteLLM (see <https://docs.litellm.ai/docs/providers>)
 
 ### External Dependencies
 
@@ -122,13 +163,13 @@ System tools required:
 - Poppler tools (pdftotext, pdftoppm, pdfimages)
 - pngquant (optional, better compression)
 
-Python packages: titlecase, pytest, pytest-mock, pytest-cov, pytest-xdist
+Python packages: litellm, titlecase, pytest, pytest-mock, pytest-cov, pytest-xdist
 
 ## Project Rules
 
-1. **Environment**: Always use pyenv environment (Python 3.11) - prepend commands with `pyenv exec`
-2. **Quality Gates**: Run flake8 at end of task - fix all errors before completion
-3. **Testing**: Run all tests at end of task - fix all failures before completion
+1. **Python Version**: Requires Python 3.11+
+2. **Quality Gates**: Run `make lint` at end of task - fix all errors before completion
+3. **Testing**: Run `make test` at end of task - fix all failures before completion
 4. **Test Quality**: Never skip tests; no test failures acceptable
 5. **Import Style**: Never import within functions - all imports at top of file
 6. **Clean Imports**: No unused imports; nothing between import statements (no blank lines or code)
@@ -138,18 +179,19 @@ Python packages: titlecase, pytest, pytest-mock, pytest-cov, pytest-xdist
 
 Test files in `tests/` directory:
 
-- `test_grok_main.py` - main grok.py functionality
-- `test_grok_file_processing.py` - file processing pipeline
-- `test_grok_api_interaction.py` - API calls
-- `test_grok_error_handling.py` - error scenarios
+- `test_llm_main.py` - main llm_client.py functionality
+- `test_llm_file_processing.py` - file processing pipeline
+- `test_llm_api_interaction.py` - API calls and LiteLLM integration
+- `test_llm_error_handling.py` - error scenarios
 - `test_invoice_renamer.py` - invoice_renamer.py functionality
 - `conftest.py` - shared fixtures (mock env, jpeg data, temp file cleanup)
 
-Key fixtures: `sample_jpeg_data`, `temp_file_cleanup`, `mock_env_file`, `mock_urllib_response`
+Key fixtures: `sample_jpeg_data`, `temp_file_cleanup`, `mock_env_file`
 
 ## File Locations
 
-- Logs: Platform-specific temp directory (e.g., `/tmp/invoice_renamer.log`)
+- Logs: `/tmp/invoice_renamer.log` and `/tmp/invoice_debug.log` on Unix-like systems (falls back to platform temp on Windows)
 - API key: Environment variable or `~/.env` file in home directory
-- Invoice renamer is run via a OSX shortcut, like this "python3 ~/Documents/Code/osx-file-renamer/invoice_renamer.py "Repeat Item (File Path)"", be sure after making changes that could impact that you test for that exact execution approach.
-- If claude memory / claude.md has changed, when its time to commit the code include the claude.md in the commit
+- Installation: Uses system Python at `/usr/local/bin/python3` to install, creates command at `/Library/Frameworks/Python.framework/Versions/3.11/bin/invoice-renamer`, symlinked from `/usr/local/bin/invoice-renamer`
+- OSX Shortcuts: Invoke as `invoice-renamer "Repeat Item (File Path)"` - the symlink in `/usr/local/bin` makes the command available in PATH
+- If CLAUDE.md has changed, include it in the commit when code changes are committed

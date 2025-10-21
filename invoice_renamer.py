@@ -11,6 +11,21 @@ import hashlib
 import shutil
 import tempfile
 
+# Debug: Write startup info to a separate debug file
+with open('/tmp/invoice_debug.log', 'a') as f:  # nosec B108
+    f.write(f"\n=== {datetime.now()} ===\n")
+    f.write(f"Python: {sys.executable}\n")
+    f.write(f"Python version: {sys.version}\n")
+    f.write(f"Script: {__file__}\n")
+    f.write(f"Args: {sys.argv}\n")
+    f.write(f"PATH: {os.environ.get('PATH', 'NOT SET')}\n")
+    f.write("which invoice-renamer: ")
+    try:
+        result = subprocess.run(['which', 'invoice-renamer'], capture_output=True, text=True, timeout=1)
+        f.write(f"{result.stdout.strip() if result.stdout else 'NOT FOUND'}\n")
+    except Exception:
+        f.write("ERROR\n")
+
 try:
     from titlecase import titlecase  # type: ignore[import-untyped]
 except ImportError:
@@ -20,9 +35,12 @@ except ImportError:
 
 
 def setup_logging():
-    """Setup logging to platform-specific temp directory with rotation to keep file size manageable"""
-    temp_dir = tempfile.gettempdir()
-    log_file = os.path.join(temp_dir, 'invoice_renamer.log')
+    """Setup logging to /tmp (or platform-specific temp) with rotation to keep file size manageable"""
+    # Use /tmp on Unix-like systems, fall back to platform temp on others
+    if os.path.exists('/tmp') and os.path.isdir('/tmp'):  # nosec B108
+        log_file = '/tmp/invoice_renamer.log'  # nosec B108
+    else:
+        log_file = os.path.join(tempfile.gettempdir(), 'invoice_renamer.log')
 
     # Check if log file exists and is too large (>100KB), truncate to last 50KB
     if os.path.exists(log_file):
@@ -55,32 +73,42 @@ def setup_logging():
     return logging.getLogger(__name__)
 
 
-def call_grok_api(prompt, file_path, all_pages=False):
-    """Call grok.py script to extract invoice information"""
+def call_llm_api(prompt, file_path, all_pages=False):
+    """Call llm_client.py script to extract invoice information"""
     logger = logging.getLogger(__name__)
-    logger.info(f"Calling Grok API for file: {file_path}")
+    logger.info(f"Calling LLM API for file: {file_path}")
     logger.debug(f"Prompt: {prompt[:200]}...")
 
     try:
-        # Try pyenv python first (for OSX shortcuts), fall back to current interpreter
-        pyenv_python = os.path.expanduser('~/.pyenv/shims/python3')
-        python_executable = pyenv_python if os.path.exists(pyenv_python) else sys.executable
+        # Use the same Python that's running this script (already re-exec'd to correct version)
+        python_executable = sys.executable
 
         cmd = [
             python_executable,
-            os.path.join(os.path.dirname(__file__), 'grok.py'),
+            os.path.join(os.path.dirname(__file__), 'llm_client.py'),
             prompt,
             '--file', file_path
         ]
         if all_pages:
             cmd.append('--all-pages')
 
+        logger.info(f"Calling llm_client.py with Python: {python_executable}")
+        logger.debug(f"Full command: {' '.join(cmd[:3])}... --file {file_path}")
+
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
 
-        logger.debug(f"Grok API response: {result.stdout}")
+        # Log model information from stderr if present
+        if result.stderr:
+            for line in result.stderr.split('\n'):
+                if 'Using LLM model:' in line:
+                    logger.info(line.strip())
+                elif line.strip():
+                    logger.debug(f"llm_client: {line.strip()}")
+
+        logger.debug(f"LLM API response: {result.stdout}")
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
-        logger.error(f"Error calling Grok API: {e}")
+        logger.error(f"Error calling LLM API: {e}")
         if e.stderr:
             logger.error(f"Error details: {e.stderr}")
             # Check for specific error types and provide helpful messages
@@ -90,12 +118,12 @@ def call_grok_api(prompt, file_path, all_pages=False):
                 logger.warning("Image file too large for processing")
         raise  # Re-raise to let caller handle
     except FileNotFoundError:
-        logger.error("grok.py script not found in the same directory")
+        logger.error("llm_client.py script not found in the same directory")
         raise  # Re-raise to let caller handle
 
 
 def extract_invoice_info(file_path, all_pages=False):
-    """Extract business name and date from invoice using Grok"""
+    """Extract business name and date from invoice using LLM"""
     logger = logging.getLogger(__name__)
     logger.info(f"Extracting invoice info from: {file_path}")
 
@@ -166,9 +194,19 @@ Return the response in this exact JSON format:
 If you cannot find any piece of information, use null for that field."""
 
     try:
-        response = call_grok_api(prompt, file_path, all_pages=all_pages)
+        response = call_llm_api(prompt, file_path, all_pages=all_pages)
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        logger.error(f"Failed to call Grok API: {e}")
+        logger.error(f"Failed to call LLM API: {e}")
+        # Log detailed environment info for "Unknown Document" debugging
+        logger.error("UNKNOWN_DOCUMENT_FALLBACK: LLM API call failed")
+        logger.error(f"  Python executable: {sys.executable}")
+        logger.error(f"  File path: {file_path}")
+        logger.error(f"  Exception type: {type(e).__name__}")
+        logger.error(f"  Exception details: {e}")
+        if isinstance(e, subprocess.CalledProcessError):
+            logger.error(f"  Return code: {e.returncode}")
+            logger.error(f"  Stdout: {e.stdout}")
+            logger.error(f"  Stderr: {e.stderr}")
         # Return fallback data instead of crashing
         return {
             'business_name': 'Unknown',
@@ -212,6 +250,12 @@ If you cannot find any piece of information, use null for that field."""
         logger.error(f"Could not parse Grok response as JSON: {e}")
         logger.error(f"Response was: {response}")
         logger.warning("Using fallback values due to JSON parsing error")
+        # Log detailed environment info for "Unknown Document" debugging
+        logger.error("UNKNOWN_DOCUMENT_FALLBACK: JSON parsing failed")
+        logger.error(f"  Python executable: {sys.executable}")
+        logger.error(f"  File path: {file_path}")
+        logger.error(f"  Response length: {len(response) if response else 0}")
+        logger.error(f"  Response preview: {response[:500] if response else 'None'}")
 
         # Return fallback data structure instead of failing
         return {
@@ -317,6 +361,9 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     """Rename invoice file based on extracted information and optionally move to target directory"""
     logger = logging.getLogger(__name__)
     logger.info(f"Starting rename process for: {file_path}")
+    logger.info(f"Python environment: {sys.executable}")
+    logger.info(f"Python version: {sys.version}")
+    logger.info(f"Command line args: {sys.argv}")
 
     if not os.path.exists(file_path):
         logger.error(f"File not found: {file_path}")

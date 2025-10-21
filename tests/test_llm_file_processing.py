@@ -8,7 +8,7 @@ from unittest.mock import patch, MagicMock
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from grok import (
+from llm_client import (
     process_image_file, compress_image, read_file_content,
     extract_embedded_images, convert_pdf_to_images,
     MAX_RAW_SIZE
@@ -36,7 +36,7 @@ class TestProcessImageFile:
         decoded = base64.b64decode(base64_part)
         assert decoded == sample_jpeg_data
 
-    @patch('grok.compress_image')
+    @patch('llm_client.compress_image')
     def test_process_image_file_compression_needed(self, mock_compress, tmp_path, sample_jpeg_data):
         """Test that large images trigger compression."""
         # Create oversized data - make it much larger than MAX_RAW_SIZE
@@ -77,7 +77,7 @@ class TestProcessImageFile:
         # Should use 'image/jpeg' as fallback
         assert "data:image/jpeg;base64," in result["image_url"]["url"]
 
-    @patch('grok.compress_image')
+    @patch('llm_client.compress_image')
     def test_process_image_file_compression_fails_exits(self, mock_compress, tmp_path, sample_jpeg_data):
         """Test that failed compression followed by oversized image exits."""
         # Create oversized data
@@ -97,12 +97,12 @@ class TestProcessImageFile:
         """Test that base64 size exceeding limit causes exit."""
         # Create data that would exceed MAX_BASE64_SIZE after encoding
         # base64 encoding increases size by ~33%, so we need data > MAX_BASE64_SIZE/1.33
-        from grok import MAX_BASE64_SIZE
+        from llm_client import MAX_BASE64_SIZE
         large_data = b'x' * (MAX_BASE64_SIZE + 1000)
         image_file = tmp_path / "huge.jpg"
         image_file.write_bytes(large_data)
 
-        with patch('grok.compress_image', return_value=None):
+        with patch('llm_client.compress_image', return_value=None):
             with pytest.raises(SystemExit) as excinfo:
                 process_image_file(str(image_file))
 
@@ -303,7 +303,7 @@ class TestReadFileContent:
         with pytest.raises(SystemExit):
             read_file_content("nonexistent.xyz")
 
-    @patch('grok.subprocess.run')
+    @patch('llm_client.subprocess.run')
     @patch('os.path.exists', return_value=True)
     def test_read_file_content_pdf_with_text(self, mock_exists, mock_run, tmp_path):
         """Test PDF processing with text extraction."""
@@ -317,8 +317,8 @@ class TestReadFileContent:
         assert result["type"] == "text"
         assert "PDF content here" in result["content"]
 
-    @patch('grok.extract_embedded_images')
-    @patch('grok.subprocess.run')
+    @patch('llm_client.extract_embedded_images')
+    @patch('llm_client.subprocess.run')
     def test_read_file_content_pdf_fallback_to_images(self, mock_run, mock_extract, tmp_path):
         """Test PDF fallback to image processing."""
         pdf_file = tmp_path / "test.pdf"
@@ -327,7 +327,7 @@ class TestReadFileContent:
         mock_run.return_value = MagicMock(returncode=0, stdout="   ")
         mock_extract.return_value = None
 
-        with patch('grok.convert_pdf_to_images') as mock_convert:
+        with patch('llm_client.convert_pdf_to_images') as mock_convert:
             mock_convert.return_value = {
                 "type": "image_url",
                 "image_url": {"url": "data:image/png;base64,test"}
@@ -345,7 +345,7 @@ class TestReadFileContent:
         image_file = tmp_path / "test.jpg"
         image_file.write_bytes(sample_jpeg_data)
 
-        with patch('grok.process_image_file') as mock_process:
+        with patch('llm_client.process_image_file') as mock_process:
             mock_process.return_value = {
                 "type": "image_url",
                 "image_url": {"url": "data:image/jpeg;base64,test"}
@@ -371,7 +371,7 @@ class TestExtractEmbeddedImages:
     @patch('subprocess.run')
     @patch('os.path.exists')
     @patch('glob.glob')
-    @patch('grok.process_image_file')
+    @patch('llm_client.process_image_file')
     def test_extract_embedded_images_single_image_success(self, mock_process, mock_glob, mock_exists, mock_run, tmp_path):
         """Test successful extraction of a single embedded image."""
         # Mock pdfimages found
@@ -407,7 +407,7 @@ class TestExtractEmbeddedImages:
     @patch('subprocess.run')
     @patch('os.path.exists')
     @patch('glob.glob')
-    @patch('grok.process_image_file')
+    @patch('llm_client.process_image_file')
     def test_extract_embedded_images_multiple_images_all_pages(self, mock_process, mock_glob, mock_exists, mock_run, tmp_path):
         """Test extraction of multiple images with all_pages=True."""
         mock_exists.return_value = True
@@ -498,7 +498,7 @@ class TestExtractEmbeddedImages:
     @patch('subprocess.run')
     @patch('os.path.exists')
     @patch('glob.glob')
-    @patch('grok.HAS_PIL', False)
+    @patch('llm_client.HAS_PIL', False)
     def test_extract_embedded_images_pbm_without_pil(self, mock_glob, mock_exists, mock_run, tmp_path):
         """Test PBM conversion fallback to ImageMagick when PIL not available."""
         mock_exists.return_value = True
@@ -520,7 +520,7 @@ class TestExtractEmbeddedImages:
         with patch('tempfile.TemporaryDirectory') as mock_tempdir:
             mock_tempdir.return_value.__enter__.return_value = str(tmp_path)
 
-            with patch('grok.process_image_file') as mock_process:
+            with patch('llm_client.process_image_file') as mock_process:
                 mock_process.return_value = {
                     "type": "image_url",
                     "image_url": {"url": "data:image/png;base64,test"}

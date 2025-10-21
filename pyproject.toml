@@ -28,6 +28,7 @@ keywords = ["invoice", "renamer", "pdf", "ai", "grok", "document-management", "f
 dependencies = [
     "titlecase>=2.4.0,<3.0.0",
     "Pillow>=10.0.0,<13.0.0",
+    "litellm>=1.0.0,<2.0.0",
 ]
 
 # Optional dependency groups
@@ -50,7 +51,6 @@ test = [
 # Console scripts - creates command-line commands
 [project.scripts]
 invoice-renamer = "invoice_renamer:main"
-grok = "grok:main"
 
 # Project URLs
 [project.urls]
@@ -109,9 +109,9 @@ show_missing = true
 directory = "htmlcov"
 
 # Explicitly specify which Python modules to include
-# Since we have multiple top-level scripts (grok.py, invoice_renamer.py)
+# Since we have multiple top-level scripts (llm_client.py, invoice_renamer.py)
 [tool.setuptools]
-py-modules = ["grok", "invoice_renamer"]
+py-modules = ["llm_client", "invoice_renamer"]
 
 # Bandit security linter configuration
 [tool.bandit]

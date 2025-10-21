@@ -65,8 +65,13 @@ Please review xAI's [terms of service](https://x.ai/terms/) and [privacy policy]
 
 ### API Requirements
 
-- **Grok API key** from [xAI](https://x.ai/)
-- Configure via environment variable `GROK_API_KEY` or in `~/.env` file
+- **API key** from your chosen LLM provider:
+  - [xAI Grok](https://x.ai/) (default) - `GROK_API_KEY`
+  - [Anthropic Claude](https://anthropic.com/) - `ANTHROPIC_API_KEY`
+  - [OpenAI GPT](https://openai.com/) - `OPENAI_API_KEY`
+  - [Google Gemini](https://ai.google.dev/) - `GOOGLE_API_KEY`
+  - [100+ other providers via LiteLLM](https://docs.litellm.ai/docs/providers)
+- Configure via environment variable or in `~/.env` file
 
 ## Installation
 
@@ -77,29 +82,44 @@ Please review xAI's [terms of service](https://x.ai/terms/) and [privacy policy]
    cd osx-file-renamer
    ```
 
-2. Set up Python environment with pyenv:
+2. Install the package to make the `invoice-renamer` command available system-wide:
 
    ```bash
-   pyenv install 3.11
-   pyenv local 3.11
+   make install
    ```
 
-3. Install the package with dependencies:
+   This will:
+   - Install the package using your system Python (3.11+)
+   - Create the `invoice-renamer` command
+   - Display instructions for creating a symlink to make the command available in your PATH
+
+3. Create the symlink (requires sudo):
 
    ```bash
-   # For development (includes testing tools)
-   pip install -e ".[dev]"
-
-   # Or for runtime only
-   pip install -e .
+   sudo ln -sf "/Library/Frameworks/Python.framework/Versions/3.11/bin/invoice-renamer" /usr/local/bin/invoice-renamer
    ```
 
-4. Set up your Grok API key:
+4. Set up your API key:
 
    ```bash
    # Add to ~/.env file or set environment variable
+   # For Grok (default):
    echo "GROK_API_KEY=your_api_key_here" >> ~/.env
+
+   # Or for other providers (Claude, GPT-4, Gemini, etc.):
+   echo "ANTHROPIC_API_KEY=your_api_key_here" >> ~/.env
+   echo "LLM_MODEL=claude-3-5-sonnet-20241022" >> ~/.env
    ```
+
+### Development Installation
+
+For development with testing tools:
+
+```bash
+make install-dev
+```
+
+This installs the package in editable mode with dev dependencies (pytest, flake8, etc.).
 
 ## Usage
 
@@ -108,7 +128,7 @@ Please review xAI's [terms of service](https://x.ai/terms/) and [privacy policy]
 Rename a single invoice file:
 
 ```bash
-python invoice_renamer.py path/to/invoice.pdf
+invoice-renamer ~/Downloads/invoice.pdf
 ```
 
 ### Advanced Options
@@ -116,32 +136,41 @@ python invoice_renamer.py path/to/invoice.pdf
 - **Dry Run** (preview changes):
 
   ```bash
-  python invoice_renamer.py path/to/invoice.pdf --dry-run
+  invoice-renamer ~/Downloads/invoice.pdf --dry-run
   ```
 
 - **Move to Directory**:
 
   ```bash
-  python invoice_renamer.py path/to/invoice.pdf --move-to /path/to/organized/documents
+  invoice-renamer ~/Downloads/invoice.pdf --move-to ~/Documents/Invoices
   ```
 
 - **Process All Pages** (for multi-page PDFs):
 
   ```bash
-  python invoice_renamer.py path/to/invoice.pdf --all-pages
+  invoice-renamer ~/Downloads/statement.pdf --all-pages
   ```
 
 ### Examples
 
 ```bash
 # Rename with preview
-python invoice_renamer.py "Business Name Document 20240315.pdf" --dry-run
+invoice-renamer ~/Downloads/invoice.pdf --dry-run
 
 # Rename and move to organized folder
-python invoice_renamer.py invoice.pdf --move-to ./organized/
+invoice-renamer ~/Downloads/invoice.pdf --move-to ~/Documents/Invoices
 
 # Process complex multi-page document
-python invoice_renamer.py complex-statement.pdf --all-pages --move-to ./statements/
+invoice-renamer ~/Downloads/statement.pdf --all-pages --move-to ~/Documents/Statements
+```
+
+### Development Usage
+
+When developing or testing from the repository directory:
+
+```bash
+cd ~/Documents/Code/osx-file-renamer
+python3 invoice_renamer.py path/to/file.pdf --dry-run
 ```
 
 ## macOS Integration
@@ -165,6 +194,10 @@ On macOS, you can create a Finder Quick Action shortcut to easily trigger the fi
 You can customize the shortcut to pass different arguments by editing the shell script action:
 
 ```bash
+# Use the installed command (recommended)
+invoice-renamer "$@" --dry-run
+
+# Or use direct script execution (for development)
 python3 ~/Documents/Code/osx-file-renamer/invoice_renamer.py "$@" --dry-run
 ```
 
@@ -324,23 +357,27 @@ If you encounter issues:
 
 ```bash
 # Run all tests
-pyenv exec pytest
+make test
+# or: pytest -v
 
 # Run with coverage
-pyenv exec pytest --cov=. --cov-report=term-missing
+make test-cov
+# or: pytest --cov=. --cov-report=term-missing
 
-# Run in parallel
-pyenv exec pytest -n auto
+# Run in parallel (faster)
+make test-fast
+# or: pytest -n auto
 
 # Run specific test file
-pyenv exec pytest tests/test_grok.py
+pytest tests/test_llm_main.py
 ```
 
 ### Code Quality
 
 ```bash
 # Check code style
-pyenv exec flake8
+make lint
+# or: flake8
 
 # View configuration
 cat .flake8
@@ -351,13 +388,14 @@ cat .flake8
 ```
 osx-file-renamer/
 ├── invoice_renamer.py      # Main application logic
-├── grok.py                 # Grok API client and file processing
+├── llm_client.py           # LLM API client (supports multiple providers via LiteLLM)
 ├── tests/                  # Test suite
-│   ├── test_grok_*.py     # Grok module tests
+│   ├── test_llm_*.py      # LLM client tests
 │   ├── test_invoice_*.py  # Invoice renamer tests
 │   ├── conftest.py        # Shared test fixtures
 │   └── fixtures/          # Real test files for integration tests
-├── requirements.txt        # Python dependencies
+├── pyproject.toml         # Package configuration and dependencies
+├── Makefile               # Build and development commands
 ├── CLAUDE.md              # AI assistant guidance
 └── README.md              # This file
 ```
@@ -368,14 +406,15 @@ Contributions are welcome! Please follow these steps:
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
-4. Add tests for new functionality
-5. Ensure tests pass: `pyenv exec pytest`
-6. Ensure code style is clean: `pyenv exec flake8`
-7. Update documentation as needed
-8. Commit your changes (`git commit -m 'Add amazing feature'`)
-9. Push to the branch (`git push origin feature/amazing-feature`)
-10. Open a Pull Request
+3. Install dev dependencies: `make install-dev`
+4. Make your changes
+5. Add tests for new functionality
+6. Ensure tests pass: `make test`
+7. Ensure code style is clean: `make lint`
+8. Update documentation as needed
+9. Commit your changes (`git commit -m 'Add amazing feature'`)
+10. Push to the branch (`git push origin feature/amazing-feature`)
+11. Open a Pull Request
 
 ### Development Guidelines
 

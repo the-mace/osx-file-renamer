@@ -9,7 +9,7 @@ import json
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from invoice_renamer import (
-    setup_logging, call_grok_api, extract_invoice_info,
+    setup_logging, call_llm_api, extract_invoice_info,
     clean_filename, format_date, rename_invoice, main
 )
 
@@ -52,55 +52,53 @@ class TestSetupLogging:
 class TestCallGrokApi:
 
     @patch('invoice_renamer.subprocess.run')
-    def test_call_grok_api_success(self, mock_run):
-        """Test call_grok_api successful execution."""
+    def test_call_llm_api_success(self, mock_run):
+        """Test call_llm_api successful execution."""
         mock_run.return_value = MagicMock(returncode=0, stdout="API Response")
 
-        result = call_grok_api("test prompt", "/path/to/file.pdf")
+        result = call_llm_api("test prompt", "/path/to/file.pdf")
 
         assert result == "API Response"
         mock_run.assert_called_once()
         args, kwargs = mock_run.call_args
-        # Should use pyenv python if it exists, otherwise sys.executable
-        pyenv_python = os.path.expanduser('~/.pyenv/shims/python3')
-        expected_python = pyenv_python if os.path.exists(pyenv_python) else sys.executable
-        assert args[0][0] == expected_python
-        assert 'grok.py' in args[0][1]
+        # Should use sys.executable (already re-exec'd to correct version)
+        assert args[0][0] == sys.executable
+        assert 'llm_client.py' in args[0][1]
         assert args[0][2] == "test prompt"
         assert args[0][3] == '--file'
         assert args[0][4] == "/path/to/file.pdf"
 
     @patch('invoice_renamer.subprocess.run')
-    def test_call_grok_api_with_all_pages(self, mock_run):
-        """Test call_grok_api with all_pages flag."""
+    def test_call_llm_api_with_all_pages(self, mock_run):
+        """Test call_llm_api with all_pages flag."""
         mock_run.return_value = MagicMock(returncode=0, stdout="Full API Response")
 
-        result = call_grok_api("test prompt", "/path/to/file.pdf", all_pages=True)
+        result = call_llm_api("test prompt", "/path/to/file.pdf", all_pages=True)
 
         assert result == "Full API Response"
         args, kwargs = mock_run.call_args
         assert '--all-pages' in args[0]
 
     @patch('invoice_renamer.subprocess.run')
-    def test_call_grok_api_file_not_found(self, mock_run):
-        """Test call_grok_api when grok.py script not found."""
+    def test_call_llm_api_file_not_found(self, mock_run):
+        """Test call_llm_api when llm_client.py script not found."""
         mock_run.side_effect = FileNotFoundError("python3 not found")
 
         with pytest.raises(FileNotFoundError):
-            call_grok_api("test prompt", "/path/to/file.pdf")
+            call_llm_api("test prompt", "/path/to/file.pdf")
 
     @patch('invoice_renamer.subprocess.run')
-    def test_call_grok_api_subprocess_error(self, mock_run):
-        """Test call_grok_api subprocess execution error."""
+    def test_call_llm_api_subprocess_error(self, mock_run):
+        """Test call_llm_api subprocess execution error."""
         mock_run.side_effect = subprocess.CalledProcessError(1, 'cmd', stderr="SSL error")
 
         with pytest.raises(subprocess.CalledProcessError):
-            call_grok_api("test prompt", "/path/to/file.pdf")
+            call_llm_api("test prompt", "/path/to/file.pdf")
 
 
 class TestExtractInvoiceInfo:
 
-    @patch('invoice_renamer.call_grok_api')
+    @patch('invoice_renamer.call_llm_api')
     def test_extract_invoice_info_success(self, mock_call_api):
         """Test extract_invoice_info successful extraction."""
         mock_response = {
@@ -119,7 +117,7 @@ class TestExtractInvoiceInfo:
         assert result == mock_response
         mock_call_api.assert_called_once()
 
-    @patch('invoice_renamer.call_grok_api')
+    @patch('invoice_renamer.call_llm_api')
     def test_extract_invoice_info_json_parse_error(self, mock_call_api):
         """Test extract_invoice_info with JSON parsing failure."""
         mock_call_api.return_value = "Invalid JSON response"
@@ -131,7 +129,7 @@ class TestExtractInvoiceInfo:
         assert result["document_type"] == "Document"
         assert result["invoice_date"] is None
 
-    @patch('invoice_renamer.call_grok_api')
+    @patch('invoice_renamer.call_llm_api')
     def test_extract_invoice_info_api_failure(self, mock_call_api):
         """Test extract_invoice_info with API call failure."""
         mock_call_api.side_effect = subprocess.CalledProcessError(1, 'cmd')
@@ -142,7 +140,7 @@ class TestExtractInvoiceInfo:
         assert result["business_name"] == "Unknown"
         assert result["document_type"] == "Document"
 
-    @patch('invoice_renamer.call_grok_api')
+    @patch('invoice_renamer.call_llm_api')
     def test_extract_invoice_info_all_pages(self, mock_call_api):
         """Test extract_invoice_info with all_pages parameter."""
         mock_response = {
@@ -237,7 +235,7 @@ class TestRenameInvoice:
 
         The remaining tests focus on core business logic:
         - setup_logging: ✓ PASSING (2 tests)
-        - call_grok_api: ✓ PASSING (4 tests)
+        - call_llm_api: ✓ PASSING (4 tests)
         - extract_invoice_info: ✓ PASSING (4 tests)
         - clean_filename: ✓ PASSING (6 tests)
         - format_date: ✓ PASSING (4 tests)
