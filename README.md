@@ -4,15 +4,15 @@
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-macOS-lightgrey.svg)
 
-A command-line tool for automatically renaming invoice and document files based on their content using AI analysis through the Grok API.
+A command-line tool for automatically renaming invoice and document files based on their content using AI analysis via LLM APIs (Claude, GPT, Grok, Gemini, and 100+ others).
 
 ## Overview
 
-This tool analyzes invoice, statement, and document files using AI (Grok API) to extract business names, document types, and dates, then applies a consistent naming convention to help organize files.
+This tool analyzes invoice, statement, and document files using AI (via LiteLLM supporting 100+ LLM providers) to extract business names, document types, and dates, then applies a consistent naming convention to help organize files.
 
 ## Data Privacy Warning
 
-⚠️ **Important:** This tool sends the contents of your files to xAI's Grok API for analysis. By using this tool, you acknowledge that file contents (including potentially sensitive financial or personal information) are being transmitted to and processed by external AI services.
+⚠️ **Important:** This tool sends the contents of your files to your chosen LLM provider's API for analysis. By using this tool, you acknowledge that file contents (including potentially sensitive financial or personal information) are being transmitted to and processed by external AI services.
 
 **What data is sent:**
 
@@ -25,11 +25,18 @@ This tool analyzes invoice, statement, and document files using AI (Grok API) to
 - Files remain on your local system
 - No automatic cloud storage or file retention by this tool
 
-Please review xAI's [terms of service](https://x.ai/terms/) and [privacy policy](https://x.ai/privacy/) to understand how your data is handled, stored, and secured before proceeding. If you have concerns about data privacy, consider alternative local processing options or avoid processing sensitive documents.
+Please review your chosen provider's terms of service and privacy policy to understand how your data is handled, stored, and secured before proceeding. If you have concerns about data privacy, consider alternative local processing options or avoid processing sensitive documents.
+
+**Provider Links:**
+
+- [xAI (Grok) Terms & Privacy](https://x.ai/terms/)
+- [Anthropic (Claude) Privacy Policy](https://www.anthropic.com/privacy)
+- [OpenAI Privacy Policy](https://openai.com/privacy/)
+- [Google AI Privacy](https://ai.google.dev/gemini-api/terms)
 
 ## Features
 
-- **AI-Powered Analysis**: Uses Grok API to intelligently extract information from various document types
+- **AI-Powered Analysis**: Uses LLM APIs (Claude, GPT, Grok, Gemini, etc.) to intelligently extract information from various document types
 - **Multiple Document Types**: Supports invoices, statements, receipts, confirmations, notices, and other document types
 - **Intelligent Naming**: Applies consistent naming conventions with business names, document types, and dates
 - **Account Information**: Handles bank statements, credit card statements, and investment accounts

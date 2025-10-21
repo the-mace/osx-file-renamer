@@ -16,7 +16,7 @@ def create_mock_litellm_response(content="Test response"):
     return mock_response
 
 
-class TestCallGrokApi:
+class TestCallLLMApi:
 
     @patch('llm_client.os.getenv')
     @patch('llm_client.completion')

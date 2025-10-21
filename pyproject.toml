@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "osx-file-renamer"
 version = "1.0.1"
-description = "AI-powered invoice and document file renamer using Grok API"
+description = "AI-powered invoice and document file renamer using LLM APIs (Claude, GPT, Grok, Gemini, 100+ others)"
 authors = [
     {name = "Rob"}
 ]
@@ -22,7 +22,7 @@ classifiers = [
     "Topic :: Utilities",
     "Topic :: Office/Business",
 ]
-keywords = ["invoice", "renamer", "pdf", "ai", "grok", "document-management", "file-organization"]
+keywords = ["invoice", "renamer", "pdf", "ai", "llm", "claude", "gpt", "grok", "gemini", "document-management", "file-organization"]
 
 # Runtime dependencies
 dependencies = [

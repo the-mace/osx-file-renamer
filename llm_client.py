@@ -66,7 +66,7 @@ COMPRESSED_FORMATS = ['.png', '.bmp', '.tiff', '.tif', '.pbm', '.ppm', '.pgm']
 
 
 def process_image_file(file_path: str, mime_type: Optional[str] = None) -> Dict[str, Any]:
-    """Process image file and return appropriate format for Grok API with size optimization"""
+    """Process image file and return appropriate format for LLM API with size optimization"""
     try:
         with open(file_path, 'rb') as f:
             file_data = f.read()
@@ -536,7 +536,7 @@ def convert_pdf_to_images(file_path, max_pages=5):
 
 
 def read_file_content(file_path, all_pages=False):
-    """Read file content and return appropriate format for Grok API"""
+    """Read file content and return appropriate format for LLM API"""
     if not os.path.exists(file_path):
         print(f"Error: File '{file_path}' not found", file=sys.stderr)
         sys.exit(1)

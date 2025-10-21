@@ -82,10 +82,15 @@ Before you begin:
    pyenv exec flake8
    ```
 
-6. Set up Grok API key (for testing with real API calls):
+6. Set up LLM API key (for testing with real API calls):
 
    ```bash
+   # Choose your preferred provider:
    echo "GROK_API_KEY=your_api_key_here" >> ~/.env
+   # or
+   echo "ANTHROPIC_API_KEY=your_api_key_here" >> ~/.env
+   # or
+   echo "OPENAI_API_KEY=your_api_key_here" >> ~/.env
    ```
 
 ## Development Workflow
@@ -126,10 +131,10 @@ pyenv exec pytest --cov=. --cov-report=term-missing
 pyenv exec pytest -n auto
 
 # Run specific test file
-pyenv exec pytest tests/test_grok.py
+pyenv exec pytest tests/test_llm_main.py
 
 # Run specific test
-pyenv exec pytest tests/test_grok.py::TestClassName::test_method_name
+pyenv exec pytest tests/test_llm_main.py::TestClassName::test_method_name
 ```
 
 ### 4. Lint Your Code
@@ -182,7 +187,7 @@ Then open a Pull Request on GitHub.
    import sys
    from datetime import datetime
    import titlecase
-   from grok import call_grok_api
+   from llm_client import call_llm_api
 
    # Bad
    import os
@@ -235,7 +240,7 @@ Then open a Pull Request on GitHub.
    ```python
    def extract_invoice_info(file_path: str, all_pages: bool = False) -> dict:
        """
-       Extract invoice metadata from a document file using Grok API.
+       Extract invoice metadata from a document file using LLM API.
 
        Args:
            file_path: Path to the document file
@@ -246,7 +251,7 @@ Then open a Pull Request on GitHub.
 
        Raises:
            FileNotFoundError: If file_path doesn't exist
-           GrokError: If API call fails
+           LLMClientError: If API call fails
        """
    ```
 
@@ -263,11 +268,11 @@ Then open a Pull Request on GitHub.
 
 ```
 tests/
-├── test_grok_main.py              # Main grok.py functionality
-├── test_grok_file_processing.py   # File processing pipeline
-├── test_grok_api_interaction.py   # API calls
-├── test_grok_error_handling.py    # Error scenarios
-├── test_grok_integration.py       # Integration tests with real files
+├── test_llm_main.py              # Main llm_client.py functionality
+├── test_llm_file_processing.py   # File processing pipeline
+├── test_llm_api_interaction.py   # API calls
+├── test_llm_error_handling.py    # Error scenarios
+├── test_llm_integration.py       # Integration tests with real files
 ├── test_invoice_renamer.py        # invoice_renamer.py tests
 ├── test_invoice_renamer_comprehensive.py  # Edge cases
 ├── conftest.py                    # Shared fixtures
@@ -282,12 +287,12 @@ tests/
 - Use real files in integration tests (from `tests/fixtures/`)
 
 ```python
-def test_rename_invoice_with_patient_name(tmp_path, mock_grok_response):
+def test_rename_invoice_with_patient_name(tmp_path, mock_llm_response):
     """Test that patient names are correctly included in filename."""
     # Arrange
     test_file = tmp_path / "test.pdf"
     test_file.write_text("test content")
-    mock_grok_response.return_value = {
+    mock_llm_response.return_value = {
         "business_name": "Vet Clinic",
         "document_type": "Invoice",
         "patient_name": "Whiskers",
