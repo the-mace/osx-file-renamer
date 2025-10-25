@@ -55,6 +55,7 @@ DEFAULT_PDF_DPI = 100
 PDF_EXTRACTION_TIMEOUT = 15
 CONVERSION_TIMEOUT = 60
 COMPRESSION_TIMEOUT = 30
+API_TIMEOUT = 120  # 120 seconds for LLM API calls
 MIN_MEANINGFUL_TEXT = 10
 ENV_FILE_PATH = "~/.env"
 DEFAULT_MODEL = "xai/grok-4-fast-reasoning"  # LiteLLM model name for Grok 4 Fast (best performance/cost balance)
@@ -732,7 +733,8 @@ def call_llm_api(prompt, model=None, file_path=None, all_pages=False, auto_visio
         response = completion(
             model=model,
             messages=messages,
-            stream=False
+            stream=False,
+            timeout=API_TIMEOUT
         )
 
         # Extract response text
