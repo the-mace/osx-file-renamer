@@ -151,7 +151,13 @@ def extract_invoice_info(file_path, all_pages=False):
    - IMPORTANT: If the document contains the word "statement" prominently,
      classify it as "Statement" not "Report"
    - Choose the most specific type that applies
-3. Invoice/statement date
+3. Invoice/statement date (REQUIRED - look carefully):
+   - For receipts: Look for the transaction date/time near the top (may be labeled "Date", in the header row, or near business info)
+   - For invoices/statements: Look for "Invoice Date", "Statement Date", "Bill Date", "Date", etc.
+   - For notices/letters: Look for the letter date at the top of the document
+   - Common formats: MM/DD/YY, MM/DD/YYYY, YYYY-MM-DD, Month DD, YYYY
+   - IMPORTANT: Always extract a date if one is visible - receipts, invoices, and statements ALWAYS have dates
+   - Return in YYYY-MM-DD format
 4. Invoice number (if available):
    - Look for "Invoice #", "Invoice No.", "Bill #", "Account #", "Reference #", etc.
    - Extract just the number/identifier part
@@ -230,6 +236,29 @@ If you cannot find any piece of information, use null for that field."""
             parsed_info = json.loads(response)
 
         logger.info(f"Extracted info: {parsed_info}")
+
+        # If date is missing, try a focused follow-up query to extract it
+        if not parsed_info.get('invoice_date'):
+            logger.info("Date not extracted, attempting focused date extraction...")
+            date_prompt = """Look carefully at this document and find the date.
+For receipts: Look for the transaction date/time near the top (may be in the header, labeled "Date", or near business info).
+For invoices/statements: Look for "Invoice Date", "Statement Date", "Bill Date", etc.
+For notices/letters: Look for the date at the top of the document.
+
+Return ONLY the date in YYYY-MM-DD format. If you see a date like "11/3/25", interpret it as MM/DD/YY and convert to YYYY-MM-DD (e.g., "2025-11-03").
+If no date is visible, return "NONE"."""
+
+            try:
+                date_response = call_llm_api(date_prompt, file_path, all_pages=all_pages)
+                date_response = date_response.strip()
+                # Check if it looks like a date (YYYY-MM-DD format)
+                if re.match(r'\d{4}-\d{2}-\d{2}', date_response):
+                    logger.info(f"Focused extraction found date: {date_response}")
+                    parsed_info['invoice_date'] = date_response
+                else:
+                    logger.info(f"Focused extraction did not find a valid date: {date_response}")
+            except Exception as e:
+                logger.warning(f"Focused date extraction failed: {e}")
 
         # Log a warning if we have partial bank statement info (one field but not the other)
         # Exception: Portfolio statements don't need account_last_4
