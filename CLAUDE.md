@@ -84,7 +84,7 @@ make lint
 
 ### Core Modules
 
-**invoice_renamer.py** (590 lines)
+#### invoice_renamer.py
 
 - Main entry point and orchestration logic
 - Extracts document metadata via llm_client.py subprocess calls
@@ -92,7 +92,7 @@ make lint
 - Handles dry-run mode, file moves, and conflict resolution
 - Logging with automatic rotation (logs to temp directory)
 
-**llm_client.py** (700 lines)
+#### llm_client.py
 
 - LLM API client for document analysis (supports Claude, GPT-4, Grok, Gemini, and 100+ models via LiteLLM)
 - File processing pipeline: PDF → image extraction/conversion → compression → API call

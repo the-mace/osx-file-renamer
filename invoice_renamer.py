@@ -34,6 +34,90 @@ except ImportError:
         return text.title()
 
 
+# LLM prompt for extracting invoice metadata
+INVOICE_EXTRACTION_PROMPT = """Extract the following information from this document:
+1. Business name - Follow these priority rules:
+   - Use the most recognizable ISSUING company/bank name
+   - For credit card statements: Use the issuing bank (e.g., "American Express", "Chase", "Citibank") - NOT the card product name
+   - For store credit cards: Use the store name (e.g., "Target", "Best Buy") rather than the backing bank
+   - For co-branded cards: Use the co-brand name when the brand is clearly recognizable and prominent (e.g., "JetBlue", "Delta", "Hilton", "Southwest") over the issuing bank
+   - For subsidiaries/billing entities: Use the parent company name if it's more recognizable (e.g., "Tesla" instead of "Blue Skies Solar II, LLC")
+   - For utility bills: Use the main utility company name
+   - For subscription services: Use the service name (e.g., "Netflix", "Spotify")
+   - For bank statements: Use the bank name (e.g., "USAA", "Chase", "Wells Fargo")
+   - Prioritize the brand the customer would recognize over legal billing entities
+2. Document type (REQUIRED - use ONE word to classify):
+   - "Invoice" - for bills, invoices requesting payment
+   - "Quote" - for quotes, estimates, proposals, bids, pricing proposals that are not requests for payment
+   - "Statement" - for bank statements, credit card statements, account statements, insurance/annuity statements (if the document says "statement" on it, use this)
+   - "Receipt" - for proof of payment, transaction receipts (NOT trade confirmations)
+   - "Confirmation" - for trade confirmations, order confirmations, transaction confirmations
+   - "Notice" - for notifications, letters, policy changes, account updates
+   - "Letter" - for general correspondence
+   - "Report" - for financial reports, summaries (only use if document explicitly says "report" and not "statement")
+   - "Map" - for property maps, site plans, layout diagrams
+   - IMPORTANT: If the document contains the word "statement" prominently,
+     classify it as "Statement" not "Report"
+   - Choose the most specific type that applies
+3. Invoice/statement date (REQUIRED - look carefully):
+   - For receipts: Look for the transaction date/time near the top (may be labeled "Date", in the header row, or near business info)
+   - For invoices/statements: Look for "Invoice Date", "Statement Date", "Bill Date", "Date", etc.
+   - For notices/letters: Look for the letter date at the top of the document
+   - Common formats: MM/DD/YY, MM/DD/YYYY, YYYY-MM-DD, Month DD, YYYY
+   - IMPORTANT: Always extract a date if one is visible - receipts, invoices, and statements ALWAYS have dates
+   - Return in YYYY-MM-DD format
+4. Invoice number (if available):
+   - Look for "Invoice #", "Invoice No.", "Bill #", "Account #", "Reference #", etc.
+   - Extract just the number/identifier part
+   - For other types of invoices: leave this null if no clear invoice number
+5. Patient or animal name (only for medical/veterinary invoices):
+   - For medical invoices: Extract the patient's name if clearly identified
+   - For veterinary invoices: Look carefully for animal/pet names in:
+     * "Animal:" field or column
+     * "Pet Name:" field
+     * "Patient:" field (in vet contexts)
+     * Table columns labeled "Animal", "Pet", or "Patient"
+     * Any clearly identified animal/pet name in the document
+   - For other types of invoices: leave this null
+6. Account details (for bank statements, credit card statements, notices, and letters):
+   - Account type: Look for the SPECIFIC account type category (not generic or product names):
+     * Bank accounts: "Checking", "Savings", "Money Market", "CD", "IRA"
+     * Credit cards: "Credit Card" (or specific tier like "Platinum", "Gold" if clearly labeled as such)
+     * Insurance/Investment accounts: Use specific types like "Annuity", "VUL", "Life Insurance", "Brokerage", "401k" (NOT generic terms like "Investment Account" or "Account")
+     * If only generic "Account" or "Investment Account" is found, leave this null
+   - Last 4 digits: Extract the last 4 digits of the account/card number
+     (look for patterns like "xxxx1234", "ending in 1234", "account ending in 1234", "2-51000" means last 4 is "1000")
+   - Extract these even from notices/letters if they reference a specific account
+   - IMPORTANT: If this is a portfolio summary or overview showing MULTIPLE accounts (2 or more different account numbers):
+     * Set account_type to "Portfolio"
+     * Set account_last_4 to null
+   - For single account documents: extract the specific account type and last 4 digits
+   - For non-financial account documents: leave these null
+
+Return the response in this exact JSON format:
+{
+  "business_name": "Company Name Here",
+  "document_type": "Type Here",
+  "invoice_date": "YYYY-MM-DD",
+  "invoice_number": "Number Here or null",
+  "patient_animal_name": "Name Here or null",
+  "account_type": "Account Type Here or null",
+  "account_last_4": "Last 4 digits or null"
+}
+
+If you cannot find any piece of information, use null for that field."""
+
+
+# Focused date extraction prompt
+DATE_EXTRACTION_PROMPT = """Look carefully at this document and find the date.
+For receipts: Look for the transaction date/time near the top (may be in the header, labeled "Date", or near business info).
+For invoices/statements: Look for "Invoice Date", "Statement Date", "Bill Date", etc.
+For notices/letters: Look for the date at the top of the document.
+
+Return ONLY the date in YYYY-MM-DD format. If you see a date like "11/3/25", interpret it as MM/DD/YY and convert to YYYY-MM-DD (e.g., "2025-11-03").
+If no date is visible, return "NONE"."""
+
+
 def setup_logging():
     """Setup logging to /tmp (or platform-specific temp) with rotation to keep file size manageable"""
     # Use /tmp on Unix-like systems, fall back to platform temp on others
@@ -122,88 +206,28 @@ def call_llm_api(prompt, file_path, all_pages=False):
         raise  # Re-raise to let caller handle
 
 
-def extract_invoice_info(file_path, all_pages=False):
-    """Extract business name and date from invoice using LLM"""
+def _create_fallback_info():
+    """Create fallback invoice info dict when extraction fails"""
+    return {
+        'business_name': 'Unknown',
+        'document_type': 'Document',
+        'invoice_date': None,
+        'invoice_number': None,
+        'patient_animal_name': None,
+        'account_type': None,
+        'account_last_4': None
+    }
+
+
+def _call_llm_for_invoice_info(file_path, all_pages=False):
+    """Call LLM API to extract invoice information"""
     logger = logging.getLogger(__name__)
-    logger.info(f"Extracting invoice info from: {file_path}")
-
-    prompt = """Extract the following information from this document:
-1. Business name - Follow these priority rules:
-   - Use the most recognizable ISSUING company/bank name
-   - For credit card statements: Use the issuing bank (e.g., "American Express", "Chase", "Citibank") - NOT the card product name
-   - For store credit cards: Use the store name (e.g., "Target", "Best Buy") rather than the backing bank
-   - For co-branded cards: Use the co-brand name when the brand is clearly recognizable and prominent (e.g., "JetBlue", "Delta", "Hilton", "Southwest") over the issuing bank
-   - For subsidiaries/billing entities: Use the parent company name if it's more recognizable (e.g., "Tesla" instead of "Blue Skies Solar II, LLC")
-   - For utility bills: Use the main utility company name
-   - For subscription services: Use the service name (e.g., "Netflix", "Spotify")
-   - For bank statements: Use the bank name (e.g., "USAA", "Chase", "Wells Fargo")
-   - Prioritize the brand the customer would recognize over legal billing entities
-2. Document type (REQUIRED - use ONE word to classify):
-   - "Invoice" - for bills, invoices requesting payment
-   - "Quote" - for quotes, estimates, proposals, bids, pricing proposals that are not requests for payment
-   - "Statement" - for bank statements, credit card statements, account statements, insurance/annuity statements (if the document says "statement" on it, use this)
-   - "Receipt" - for proof of payment, transaction receipts (NOT trade confirmations)
-   - "Confirmation" - for trade confirmations, order confirmations, transaction confirmations
-   - "Notice" - for notifications, letters, policy changes, account updates
-   - "Letter" - for general correspondence
-   - "Report" - for financial reports, summaries (only use if document explicitly says "report" and not "statement")
-   - "Map" - for property maps, site plans, layout diagrams
-   - IMPORTANT: If the document contains the word "statement" prominently,
-     classify it as "Statement" not "Report"
-   - Choose the most specific type that applies
-3. Invoice/statement date (REQUIRED - look carefully):
-   - For receipts: Look for the transaction date/time near the top (may be labeled "Date", in the header row, or near business info)
-   - For invoices/statements: Look for "Invoice Date", "Statement Date", "Bill Date", "Date", etc.
-   - For notices/letters: Look for the letter date at the top of the document
-   - Common formats: MM/DD/YY, MM/DD/YYYY, YYYY-MM-DD, Month DD, YYYY
-   - IMPORTANT: Always extract a date if one is visible - receipts, invoices, and statements ALWAYS have dates
-   - Return in YYYY-MM-DD format
-4. Invoice number (if available):
-   - Look for "Invoice #", "Invoice No.", "Bill #", "Account #", "Reference #", etc.
-   - Extract just the number/identifier part
-   - For other types of invoices: leave this null if no clear invoice number
-5. Patient or animal name (only for medical/veterinary invoices):
-   - For medical invoices: Extract the patient's name if clearly identified
-   - For veterinary invoices: Look carefully for animal/pet names in:
-     * "Animal:" field or column
-     * "Pet Name:" field
-     * "Patient:" field (in vet contexts)
-     * Table columns labeled "Animal", "Pet", or "Patient"
-     * Any clearly identified animal/pet name in the document
-   - For other types of invoices: leave this null
-6. Account details (for bank statements, credit card statements, notices, and letters):
-   - Account type: Look for the SPECIFIC account type category (not generic or product names):
-     * Bank accounts: "Checking", "Savings", "Money Market", "CD", "IRA"
-     * Credit cards: "Credit Card" (or specific tier like "Platinum", "Gold" if clearly labeled as such)
-     * Insurance/Investment accounts: Use specific types like "Annuity", "VUL", "Life Insurance", "Brokerage", "401k" (NOT generic terms like "Investment Account" or "Account")
-     * If only generic "Account" or "Investment Account" is found, leave this null
-   - Last 4 digits: Extract the last 4 digits of the account/card number
-     (look for patterns like "xxxx1234", "ending in 1234", "account ending in 1234", "2-51000" means last 4 is "1000")
-   - Extract these even from notices/letters if they reference a specific account
-   - IMPORTANT: If this is a portfolio summary or overview showing MULTIPLE accounts (2 or more different account numbers):
-     * Set account_type to "Portfolio"
-     * Set account_last_4 to null
-   - For single account documents: extract the specific account type and last 4 digits
-   - For non-financial account documents: leave these null
-
-Return the response in this exact JSON format:
-{
-  "business_name": "Company Name Here",
-  "document_type": "Type Here",
-  "invoice_date": "YYYY-MM-DD",
-  "invoice_number": "Number Here or null",
-  "patient_animal_name": "Name Here or null",
-  "account_type": "Account Type Here or null",
-  "account_last_4": "Last 4 digits or null"
-}
-
-If you cannot find any piece of information, use null for that field."""
-
     try:
-        response = call_llm_api(prompt, file_path, all_pages=all_pages)
+        response = call_llm_api(INVOICE_EXTRACTION_PROMPT, file_path, all_pages=all_pages)
+        return response
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         logger.error(f"Failed to call LLM API: {e}")
-        # Log detailed environment info for "Unknown Document" debugging
+        # Log detailed environment info for debugging
         logger.error("UNKNOWN_DOCUMENT_FALLBACK: LLM API call failed")
         logger.error(f"  Python executable: {sys.executable}")
         logger.error(f"  File path: {file_path}")
@@ -213,18 +237,15 @@ If you cannot find any piece of information, use null for that field."""
             logger.error(f"  Return code: {e.returncode}")
             logger.error(f"  Stdout: {e.stdout}")
             logger.error(f"  Stderr: {e.stderr}")
-        # Return fallback data instead of crashing
-        return {
-            'business_name': 'Unknown',
-            'document_type': 'Document',
-            'invoice_date': None,
-            'invoice_number': None,
-            'patient_animal_name': None,
-            'account_type': None,
-            'account_last_4': None
-        }
+        return None
 
-    # Try to extract JSON from the response
+
+def _parse_llm_response(response):
+    """Parse JSON from LLM response"""
+    logger = logging.getLogger(__name__)
+    if response is None:
+        return None
+
     try:
         # Look for JSON in the response
         json_match = re.search(r'\{[^}]*"business_name"[^}]*\}', response, re.DOTALL)
@@ -236,66 +257,80 @@ If you cannot find any piece of information, use null for that field."""
             parsed_info = json.loads(response)
 
         logger.info(f"Extracted info: {parsed_info}")
-
-        # If date is missing, try a focused follow-up query to extract it
-        if not parsed_info.get('invoice_date'):
-            logger.info("Date not extracted, attempting focused date extraction...")
-            date_prompt = """Look carefully at this document and find the date.
-For receipts: Look for the transaction date/time near the top (may be in the header, labeled "Date", or near business info).
-For invoices/statements: Look for "Invoice Date", "Statement Date", "Bill Date", etc.
-For notices/letters: Look for the date at the top of the document.
-
-Return ONLY the date in YYYY-MM-DD format. If you see a date like "11/3/25", interpret it as MM/DD/YY and convert to YYYY-MM-DD (e.g., "2025-11-03").
-If no date is visible, return "NONE"."""
-
-            try:
-                date_response = call_llm_api(date_prompt, file_path, all_pages=all_pages)
-                date_response = date_response.strip()
-                # Check if it looks like a date (YYYY-MM-DD format)
-                if re.match(r'\d{4}-\d{2}-\d{2}', date_response):
-                    logger.info(f"Focused extraction found date: {date_response}")
-                    parsed_info['invoice_date'] = date_response
-                else:
-                    logger.info(f"Focused extraction did not find a valid date: {date_response}")
-            except Exception as e:
-                logger.warning(f"Focused date extraction failed: {e}")
-
-        # Log a warning if we have partial bank statement info (one field but not the other)
-        # Exception: Portfolio statements don't need account_last_4
-        has_account_type = parsed_info.get('account_type') is not None
-        has_account_last_4 = parsed_info.get('account_last_4') is not None
-        account_type_value = parsed_info.get('account_type')
-        is_portfolio = account_type_value and account_type_value.lower() == 'portfolio'
-        if has_account_type != has_account_last_4 and not is_portfolio:
-            logger.warning(f"Partial bank statement data: account_type={parsed_info.get('account_type')}, account_last_4={parsed_info.get('account_last_4')}")
-
-        # Validate that document_type was provided
-        if not parsed_info.get('document_type'):
-            logger.warning("Document type not provided by API, defaulting to 'Document'")
-            parsed_info['document_type'] = 'Document'
-
         return parsed_info
     except json.JSONDecodeError as e:
         logger.error(f"Could not parse LLM response as JSON: {e}")
         logger.error(f"Response was: {response}")
-        logger.warning("Using fallback values due to JSON parsing error")
-        # Log detailed environment info for "Unknown Document" debugging
         logger.error("UNKNOWN_DOCUMENT_FALLBACK: JSON parsing failed")
-        logger.error(f"  Python executable: {sys.executable}")
-        logger.error(f"  File path: {file_path}")
         logger.error(f"  Response length: {len(response) if response else 0}")
         logger.error(f"  Response preview: {response[:500] if response else 'None'}")
+        return None
 
-        # Return fallback data structure instead of failing
-        return {
-            'business_name': 'Unknown',
-            'document_type': 'Document',
-            'invoice_date': None,
-            'invoice_number': None,
-            'patient_animal_name': None,
-            'account_type': None,
-            'account_last_4': None
-        }
+
+def _retry_date_extraction(file_path, all_pages=False):
+    """Retry date extraction with focused prompt"""
+    logger = logging.getLogger(__name__)
+    logger.info("Date not extracted, attempting focused date extraction...")
+
+    try:
+        date_response = call_llm_api(DATE_EXTRACTION_PROMPT, file_path, all_pages=all_pages)
+        date_response = date_response.strip()
+        # Check if it looks like a date (YYYY-MM-DD format)
+        if re.match(r'\d{4}-\d{2}-\d{2}', date_response):
+            logger.info(f"Focused extraction found date: {date_response}")
+            return date_response
+        else:
+            logger.info(f"Focused extraction did not find a valid date: {date_response}")
+            return None
+    except Exception as e:
+        logger.warning(f"Focused date extraction failed: {e}")
+        return None
+
+
+def _validate_invoice_data(parsed_info):
+    """Validate and log warnings for invoice data"""
+    logger = logging.getLogger(__name__)
+
+    # Log a warning if we have partial bank statement info (one field but not the other)
+    # Exception: Portfolio statements don't need account_last_4
+    has_account_type = parsed_info.get('account_type') is not None
+    has_account_last_4 = parsed_info.get('account_last_4') is not None
+    account_type_value = parsed_info.get('account_type')
+    is_portfolio = account_type_value and account_type_value.lower() == 'portfolio'
+    if has_account_type != has_account_last_4 and not is_portfolio:
+        logger.warning(f"Partial bank statement data: account_type={parsed_info.get('account_type')}, account_last_4={parsed_info.get('account_last_4')}")
+
+    # Validate that document_type was provided
+    if not parsed_info.get('document_type'):
+        logger.warning("Document type not provided by API, defaulting to 'Document'")
+        parsed_info['document_type'] = 'Document'
+
+
+def extract_invoice_info(file_path, all_pages=False):
+    """Extract business name and date from invoice using LLM"""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Extracting invoice info from: {file_path}")
+
+    # Call LLM API
+    response = _call_llm_for_invoice_info(file_path, all_pages)
+    if response is None:
+        return _create_fallback_info()
+
+    # Parse JSON response
+    parsed_info = _parse_llm_response(response)
+    if parsed_info is None:
+        return _create_fallback_info()
+
+    # If date is missing, try a focused follow-up query to extract it
+    if not parsed_info.get('invoice_date'):
+        date = _retry_date_extraction(file_path, all_pages)
+        if date:
+            parsed_info['invoice_date'] = date
+
+    # Validate and log warnings
+    _validate_invoice_data(parsed_info)
+
+    return parsed_info
 
 
 def clean_filename(text, limit_words=None):
@@ -386,30 +421,13 @@ def format_date(date_str):
     return "00000000"
 
 
-def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
-    """Rename invoice file based on extracted information and optionally move to target directory"""
-    logger = logging.getLogger(__name__)
-    logger.info(f"Starting rename process for: {file_path}")
-    logger.info(f"Python environment: {sys.executable}")
-    logger.info(f"Python version: {sys.version}")
-    logger.info(f"Command line args: {sys.argv}")
-
-    if not os.path.exists(file_path):
-        logger.error(f"File not found: {file_path}")
-        print(f"Error: File '{file_path}' not found", file=sys.stderr)
-        return False
-
-    logger.debug(f"Processing: {file_path}")
-
-    # Extract information from invoice
-    info = extract_invoice_info(file_path, all_pages=all_pages)
-
+def _sanitize_document_fields(info):
+    """Sanitize account and invoice fields based on document type"""
     # Clean up any "null" strings returned by API - convert to None
     for key in info:
         if info[key] == "null":
             info[key] = None
 
-    # Sanitize account and invoice number based on document type
     # Only include account details for statements, notices, and letters
     if info.get('document_type') not in ['Statement', 'Notice', 'Letter']:
         info['account_type'] = None
@@ -419,9 +437,14 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     if info.get('document_type') in ['Receipt', 'Confirmation']:
         info['invoice_number'] = None
 
+
+def _clean_and_validate_fields(info):
+    """Clean and validate individual fields from invoice info"""
     business_name = clean_filename(info.get('business_name'), limit_words=4)
     document_type = clean_filename(info.get('document_type')) if info.get('document_type') else 'Document'
     invoice_date = format_date(info.get('invoice_date'))
+
+    # Process invoice number
     invoice_number = info.get('invoice_number')
     if invoice_number:
         # If invoice_number looks like an account number (long digits), take last 4 digits
@@ -433,8 +456,14 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
         invoice_number = clean_filename(invoice_number) if invoice_number else None
     else:
         invoice_number = None
+
+    # Process patient/animal name
     patient_animal_name = clean_filename(info.get('patient_animal_name')) if info.get('patient_animal_name') else None
+
+    # Process account type
     account_type = clean_filename(info.get('account_type')) if info.get('account_type') else None
+
+    # Process account last 4
     account_last_4 = info.get('account_last_4')
     if account_last_4:
         # Ensure only the last 4 digits are used and verify it's exactly 4 digits
@@ -452,26 +481,29 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     else:
         account_last_4 = None
 
-    logger.info(f"Extracted business name: {business_name}")
-    logger.info(f"Extracted document type: {document_type}")
-    logger.info(f"Extracted date: {info.get('invoice_date')} -> {invoice_date}")
-    if invoice_number:
-        logger.info(f"Extracted invoice number: {invoice_number}")
-    if patient_animal_name:
-        logger.info(f"Extracted patient/animal name: {patient_animal_name}")
-    if account_type:
-        logger.info(f"Extracted account type: {account_type}")
-    if account_last_4:
-        logger.info(f"Extracted account last 4: {account_last_4}")
+    return {
+        'business_name': business_name,
+        'document_type': document_type,
+        'invoice_date': invoice_date,
+        'invoice_number': invoice_number,
+        'patient_animal_name': patient_animal_name,
+        'account_type': account_type,
+        'account_last_4': account_last_4
+    }
 
-    # Get file extension
-    file_dir = os.path.dirname(file_path)
-    file_ext = os.path.splitext(file_path)[1]
 
-    # Create new filename with document type, patient/animal name and invoice number if available
+def _build_filename_parts(fields, file_ext):
+    """Build filename parts from cleaned fields"""
+    business_name = fields['business_name']
+    document_type = fields['document_type']
+    invoice_date = fields['invoice_date']
+    invoice_number = fields['invoice_number']
+    patient_animal_name = fields['patient_animal_name']
+    account_type = fields['account_type']
+    account_last_4 = fields['account_last_4']
+
     # Format: Business Name [Account-Type] Document-Type [Last4] [- Patient/Animal] [Invoice#] Date
     # For bank-related/credit card documents, insert account type before document type
-    # But avoid including account_type if it would duplicate the business name
     should_include_account = (account_type and account_last_4 and
                               account_type.lower() not in ['life insurance', 'annuity', 'vul'])
 
@@ -494,24 +526,18 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
         # Only include if it's exactly 4 digits (to avoid random numbers being misidentified as account numbers)
         if len(re.sub(r'[^\d]', '', invoice_number)) == 4:
             filename_parts.append(invoice_number)
-        # If not 4 digits, skip it - it's probably not a valid account number
 
     # Only include date if it's valid (not 00000000)
     if invoice_date and invoice_date != "00000000":
         filename_parts.append(invoice_date)
 
     new_filename = f"{' '.join(filename_parts)}{file_ext}"
+    return new_filename, invoice_date
 
-    # Determine target directory
-    target_dir = move_to if move_to else file_dir
-    if move_to and not os.path.exists(move_to):
-        if dry_run:
-            logger.info(f"Target directory does not exist (would be created): {move_to}")
-        else:
-            os.makedirs(move_to, exist_ok=True)
-            logger.info(f"Created target directory: {move_to}")
 
-    # Check if target file exists and make name unique if needed
+def _handle_duplicate_filename(target_dir, new_filename, file_path, invoice_date, file_ext):
+    """Handle duplicate filenames by adding counter before date"""
+    logger = logging.getLogger(__name__)
     base_new_file_path = os.path.join(target_dir, new_filename)
     new_file_path = base_new_file_path
 
@@ -523,7 +549,7 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
         if counter > max_attempts:
             logger.error(f"Too many duplicate files (checked {max_attempts} variations), giving up")
             print("Error: Too many files with similar names exist", file=sys.stderr)
-            return False
+            return None
 
         # Extract parts to insert counter before date
         base_name = os.path.splitext(new_filename)[0]
@@ -548,33 +574,72 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
         new_file_path = os.path.join(target_dir, unique_filename)
         counter += 1
 
-    new_filename = os.path.basename(new_file_path)
-    logger.info(f"New filename: {new_filename}")
+    return new_file_path
 
-    if dry_run:
-        logger.info("Dry run mode - file not actually renamed")
+
+def _handle_case_only_rename(file_path, new_file_path, move_to, target_dir):
+    """Handle two-step rename for case-only changes on case-insensitive filesystems"""
+    logger = logging.getLogger(__name__)
+    current_filename = os.path.basename(file_path)
+    target_filename = os.path.basename(new_file_path)
+
+    logger.info("Performing case-only rename")
+    temp_path = None
+    try:
+        # Create unique temporary name based on original filename and timestamp
+        file_base = os.path.splitext(file_path)[0]
+        file_ext = os.path.splitext(file_path)[1]
+
+        # Create a hash from the original and target paths for uniqueness
+        # MD5 is not used for security here, just for generating a unique filename
+        unique_hash = hashlib.md5(f"{file_path}->{new_file_path}".encode(), usedforsecurity=False).hexdigest()[:8]  # nosec B324
+        temp_path = f"{file_base}.tmp_{unique_hash}{file_ext}"
+
+        logger.debug(f"Using temporary path: {temp_path}")
+
+        # Step 1: Rename to temporary name
+        os.rename(file_path, temp_path)
+        # Step 2: Rename to final name
+        try:
+            os.rename(temp_path, new_file_path)
+        except OSError as e:
+            # Rollback: restore original filename
+            logger.error(f"Step 2 failed, rolling back: {e}")
+            try:
+                os.rename(temp_path, file_path)
+                logger.info("Successfully rolled back to original filename")
+            except OSError as rollback_error:
+                logger.error(f"CRITICAL: Rollback failed, file left at: {temp_path}. Error: {rollback_error}")
+            raise
+        logger.info(f"Successfully case-renamed: {file_path} -> {new_file_path}")
         if move_to:
-            print(f"Would rename {os.path.basename(file_path)} to {new_filename} and move to {os.path.basename(target_dir)}")
+            print(f"Renamed {current_filename} to {target_filename} and moved to {os.path.basename(target_dir)}")
         else:
-            print(f"Would rename {os.path.basename(file_path)} to {new_filename}")
+            print(f"Renamed {current_filename} to {target_filename}")
         return True
+    except OSError as e:
+        logger.error(f"Error during case-only rename: {e}")
+        print(f"Error renaming file: {e}", file=sys.stderr)
+        return False
+
+
+def _execute_rename(file_path, new_file_path, move_to, target_dir):
+    """Execute the actual rename/move operation"""
+    logger = logging.getLogger(__name__)
+    current_filename = os.path.basename(file_path)
+    target_filename = os.path.basename(new_file_path)
+    file_dir = os.path.dirname(file_path)
 
     # Check if target file already exists
     if os.path.exists(new_file_path):
         # Do case-sensitive filename comparison
-        current_filename = os.path.basename(file_path)
-        target_filename = os.path.basename(new_file_path)
-
         if current_filename == target_filename:
             logger.info("File already has the correct name")
             if move_to and target_dir != file_dir:
                 # File has correct name but needs to be moved
                 try:
-                    if not dry_run:
-                        shutil.move(file_path, new_file_path)
-                        print(f"Moved {target_filename} to {os.path.basename(target_dir)}")
-                    else:
-                        print(f"Would move {target_filename} to {os.path.basename(target_dir)}")
+                    shutil.move(file_path, new_file_path)
+                    print(f"Moved {target_filename} to {os.path.basename(target_dir)}")
                     return True
                 except OSError as e:
                     logger.error(f"Error moving file: {e}")
@@ -585,45 +650,7 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
                 return True
         elif current_filename.lower() == target_filename.lower():
             # Same filename but different case - this is a case-only rename
-            # On case-insensitive filesystems, we need to do a two-step rename
-            logger.info("Performing case-only rename")
-            temp_path = None
-            try:
-                # Create unique temporary name based on original filename and timestamp
-                file_base = os.path.splitext(file_path)[0]
-                file_ext = os.path.splitext(file_path)[1]
-
-                # Create a hash from the original and target paths for uniqueness
-                # MD5 is not used for security here, just for generating a unique filename
-                unique_hash = hashlib.md5(f"{file_path}->{new_file_path}".encode(), usedforsecurity=False).hexdigest()[:8]  # nosec B324
-                temp_path = f"{file_base}.tmp_{unique_hash}{file_ext}"
-
-                logger.debug(f"Using temporary path: {temp_path}")
-
-                # Step 1: Rename to temporary name
-                os.rename(file_path, temp_path)
-                # Step 2: Rename to final name
-                try:
-                    os.rename(temp_path, new_file_path)
-                except OSError as e:
-                    # Rollback: restore original filename
-                    logger.error(f"Step 2 failed, rolling back: {e}")
-                    try:
-                        os.rename(temp_path, file_path)
-                        logger.info("Successfully rolled back to original filename")
-                    except OSError as rollback_error:
-                        logger.error(f"CRITICAL: Rollback failed, file left at: {temp_path}. Error: {rollback_error}")
-                    raise
-                logger.info(f"Successfully case-renamed: {file_path} -> {new_file_path}")
-                if move_to:
-                    print(f"Renamed {current_filename} to {target_filename} and moved to {os.path.basename(target_dir)}")
-                else:
-                    print(f"Renamed {current_filename} to {target_filename}")
-                return True
-            except OSError as e:
-                logger.error(f"Error during case-only rename: {e}")
-                print(f"Error renaming file: {e}", file=sys.stderr)
-                return False
+            return _handle_case_only_rename(file_path, new_file_path, move_to, target_dir)
         else:
             logger.error(f"Target file already exists: {new_file_path}")
             print(f"Error: Target file '{new_file_path}' already exists", file=sys.stderr)
@@ -635,11 +662,11 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
             # Use shutil.move for cross-directory moves
             shutil.move(file_path, new_file_path)
             logger.info(f"Successfully moved and renamed: {file_path} -> {new_file_path}")
-            print(f"Renamed {os.path.basename(file_path)} to {os.path.basename(new_file_path)} and moved to {os.path.basename(target_dir)}")
+            print(f"Renamed {current_filename} to {target_filename} and moved to {os.path.basename(target_dir)}")
         else:
             os.rename(file_path, new_file_path)
             logger.info(f"Successfully renamed: {file_path} -> {new_file_path}")
-            print(f"Renamed {os.path.basename(file_path)} to {os.path.basename(new_file_path)}")
+            print(f"Renamed {current_filename} to {target_filename}")
         return True
     except FileExistsError:
         logger.error(f"Target file already exists (race condition): {new_file_path}")
@@ -649,6 +676,77 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
         logger.error(f"Error renaming/moving file: {e}")
         print(f"Error renaming/moving file: {e}", file=sys.stderr)
         return False
+
+
+def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
+    """Rename invoice file based on extracted information and optionally move to target directory"""
+    logger = logging.getLogger(__name__)
+    logger.info(f"Starting rename process for: {file_path}")
+    logger.info(f"Python environment: {sys.executable}")
+    logger.info(f"Python version: {sys.version}")
+    logger.info(f"Command line args: {sys.argv}")
+
+    # Validate file exists
+    if not os.path.exists(file_path):
+        logger.error(f"File not found: {file_path}")
+        print(f"Error: File '{file_path}' not found", file=sys.stderr)
+        return False
+
+    logger.debug(f"Processing: {file_path}")
+
+    # Extract and sanitize information
+    info = extract_invoice_info(file_path, all_pages=all_pages)
+    _sanitize_document_fields(info)
+    fields = _clean_and_validate_fields(info)
+
+    # Log extracted fields
+    logger.info(f"Extracted business name: {fields['business_name']}")
+    logger.info(f"Extracted document type: {fields['document_type']}")
+    logger.info(f"Extracted date: {info.get('invoice_date')} -> {fields['invoice_date']}")
+    if fields['invoice_number']:
+        logger.info(f"Extracted invoice number: {fields['invoice_number']}")
+    if fields['patient_animal_name']:
+        logger.info(f"Extracted patient/animal name: {fields['patient_animal_name']}")
+    if fields['account_type']:
+        logger.info(f"Extracted account type: {fields['account_type']}")
+    if fields['account_last_4']:
+        logger.info(f"Extracted account last 4: {fields['account_last_4']}")
+
+    # Get file extension and directory
+    file_dir = os.path.dirname(file_path)
+    file_ext = os.path.splitext(file_path)[1]
+
+    # Build filename
+    new_filename, invoice_date = _build_filename_parts(fields, file_ext)
+
+    # Determine target directory
+    target_dir = move_to if move_to else file_dir
+    if move_to and not os.path.exists(move_to):
+        if dry_run:
+            logger.info(f"Target directory does not exist (would be created): {move_to}")
+        else:
+            os.makedirs(move_to, exist_ok=True)
+            logger.info(f"Created target directory: {move_to}")
+
+    # Handle duplicate filenames
+    new_file_path = _handle_duplicate_filename(target_dir, new_filename, file_path, invoice_date, file_ext)
+    if new_file_path is None:
+        return False  # Too many duplicates
+
+    new_filename = os.path.basename(new_file_path)
+    logger.info(f"New filename: {new_filename}")
+
+    # Handle dry run mode
+    if dry_run:
+        logger.info("Dry run mode - file not actually renamed")
+        if move_to:
+            print(f"Would rename {os.path.basename(file_path)} to {new_filename} and move to {os.path.basename(target_dir)}")
+        else:
+            print(f"Would rename {os.path.basename(file_path)} to {new_filename}")
+        return True
+
+    # Execute rename/move
+    return _execute_rename(file_path, new_file_path, move_to, target_dir)
 
 
 def main():

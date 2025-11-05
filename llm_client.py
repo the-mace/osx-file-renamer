@@ -66,6 +66,99 @@ IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '
 COMPRESSED_FORMATS = ['.png', '.bmp', '.tiff', '.tif', '.pbm', '.ppm', '.pgm']
 
 
+def _cleanup_temp_file(temp_path: Optional[str]) -> None:
+    """Safely clean up a temporary file, ignoring errors"""
+    if temp_path:
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
+
+
+def _try_jpeg_conversion(file_path: str, max_size: int) -> Optional[bytes]:
+    """Try converting PNG/BMP to JPEG with various quality levels"""
+    for quality in [85, 70, 50, 30]:
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
+                temp_path = tmp_file.name
+
+            result = subprocess.run(['convert', file_path, '-quality', str(quality), temp_path],
+                                    capture_output=True, text=True, timeout=COMPRESSION_TIMEOUT)
+
+            if result.returncode == 0 and os.path.exists(temp_path):
+                with open(temp_path, 'rb') as f:
+                    compressed_data = f.read()
+                _cleanup_temp_file(temp_path)
+
+                if len(compressed_data) <= max_size:
+                    print(f"Compressed to JPEG quality {quality}: {len(compressed_data):,} bytes", file=sys.stderr)
+                    return compressed_data
+            else:
+                _cleanup_temp_file(temp_path)
+
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+            _cleanup_temp_file(temp_path)
+            continue
+    return None
+
+
+def _try_jpeg_recompression(file_path: str, max_size: int) -> Optional[bytes]:
+    """Try recompressing JPEG with lower quality levels"""
+    for quality in [70, 50, 30, 20]:
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
+                temp_path = tmp_file.name
+
+            result = subprocess.run(['convert', file_path, '-quality', str(quality), temp_path],
+                                    capture_output=True, text=True, timeout=COMPRESSION_TIMEOUT)
+
+            if result.returncode == 0 and os.path.exists(temp_path):
+                with open(temp_path, 'rb') as f:
+                    compressed_data = f.read()
+                _cleanup_temp_file(temp_path)
+
+                if len(compressed_data) <= max_size:
+                    print(f"Recompressed JPEG to quality {quality}: {len(compressed_data):,} bytes", file=sys.stderr)
+                    return compressed_data
+            else:
+                _cleanup_temp_file(temp_path)
+
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+            _cleanup_temp_file(temp_path)
+            continue
+    return None
+
+
+def _try_image_scaling(file_path: str, max_size: int) -> Optional[bytes]:
+    """Try scaling down the image to reduce size"""
+    for scale in ['75%', '50%', '25%']:
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
+                temp_path = tmp_file.name
+
+            result = subprocess.run(['convert', file_path, '-resize', scale, '-quality', '70', temp_path],
+                                    capture_output=True, text=True, timeout=COMPRESSION_TIMEOUT)
+
+            if result.returncode == 0 and os.path.exists(temp_path):
+                with open(temp_path, 'rb') as f:
+                    compressed_data = f.read()
+                _cleanup_temp_file(temp_path)
+
+                if len(compressed_data) <= max_size:
+                    print(f"Scaled to {scale} and compressed: {len(compressed_data):,} bytes", file=sys.stderr)
+                    return compressed_data
+            else:
+                _cleanup_temp_file(temp_path)
+
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+            _cleanup_temp_file(temp_path)
+            continue
+    return None
+
+
 def process_image_file(file_path: str, mime_type: Optional[str] = None) -> Dict[str, Any]:
     """Process image file and return appropriate format for LLM API with size optimization"""
     try:
@@ -120,114 +213,20 @@ def compress_image(file_path: str, original_data: bytes, max_size: int) -> Optio
     try:
         # Method 1: Try converting to JPEG with quality reduction (if not already JPEG)
         if file_ext in COMPRESSED_FORMATS:
-            for quality in [85, 70, 50, 30]:
-                temp_path = None
-                try:
-                    # Use ImageMagick convert if available
-                    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
-                        temp_path = tmp_file.name
-
-                    result = subprocess.run(['convert', file_path, '-quality', str(quality), temp_path],
-                                            capture_output=True, text=True, timeout=COMPRESSION_TIMEOUT)
-
-                    if result.returncode == 0 and os.path.exists(temp_path):
-                        with open(temp_path, 'rb') as f:
-                            compressed_data = f.read()
-                        try:
-                            os.unlink(temp_path)
-                        except FileNotFoundError:
-                            pass
-
-                        if len(compressed_data) <= max_size:
-                            print(f"Compressed to JPEG quality {quality}: {len(compressed_data):,} bytes", file=sys.stderr)
-                            return compressed_data
-                    else:
-                        if temp_path:
-                            try:
-                                os.unlink(temp_path)
-                            except FileNotFoundError:
-                                pass
-
-                except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
-                    if temp_path:
-                        try:
-                            os.unlink(temp_path)
-                        except FileNotFoundError:
-                            pass
-                    continue
+            compressed = _try_jpeg_conversion(file_path, max_size)
+            if compressed:
+                return compressed
 
         # Method 2: For JPEG files, try re-compressing with lower quality
         elif file_ext in ['.jpg', '.jpeg']:
-            for quality in [70, 50, 30, 20]:
-                temp_path = None
-                try:
-                    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
-                        temp_path = tmp_file.name
-
-                    result = subprocess.run(['convert', file_path, '-quality', str(quality), temp_path],
-                                            capture_output=True, text=True, timeout=COMPRESSION_TIMEOUT)
-
-                    if result.returncode == 0 and os.path.exists(temp_path):
-                        with open(temp_path, 'rb') as f:
-                            compressed_data = f.read()
-                        try:
-                            os.unlink(temp_path)
-                        except FileNotFoundError:
-                            pass
-
-                        if len(compressed_data) <= max_size:
-                            print(f"Recompressed JPEG to quality {quality}: {len(compressed_data):,} bytes", file=sys.stderr)
-                            return compressed_data
-                    else:
-                        if temp_path:
-                            try:
-                                os.unlink(temp_path)
-                            except FileNotFoundError:
-                                pass
-
-                except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
-                    if temp_path:
-                        try:
-                            os.unlink(temp_path)
-                        except FileNotFoundError:
-                            pass
-                    continue
+            compressed = _try_jpeg_recompression(file_path, max_size)
+            if compressed:
+                return compressed
 
         # Method 3: Try scaling down the image
-        for scale in ['75%', '50%', '25%']:
-            temp_path = None
-            try:
-                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
-                    temp_path = tmp_file.name
-
-                result = subprocess.run(['convert', file_path, '-resize', scale, '-quality', '70', temp_path],
-                                        capture_output=True, text=True, timeout=COMPRESSION_TIMEOUT)
-
-                if result.returncode == 0 and os.path.exists(temp_path):
-                    with open(temp_path, 'rb') as f:
-                        compressed_data = f.read()
-                    try:
-                        os.unlink(temp_path)
-                    except FileNotFoundError:
-                        pass
-
-                    if len(compressed_data) <= max_size:
-                        print(f"Scaled to {scale} and compressed: {len(compressed_data):,} bytes", file=sys.stderr)
-                        return compressed_data
-                else:
-                    if temp_path:
-                        try:
-                            os.unlink(temp_path)
-                        except FileNotFoundError:
-                            pass
-
-            except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
-                if temp_path:
-                    try:
-                        os.unlink(temp_path)
-                    except FileNotFoundError:
-                        pass
-                continue
+        compressed = _try_image_scaling(file_path, max_size)
+        if compressed:
+            return compressed
 
         print("Warning: Could not compress image below size limit", file=sys.stderr)
         return None
