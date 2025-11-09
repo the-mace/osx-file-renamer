@@ -11,21 +11,6 @@ import hashlib
 import shutil
 import tempfile
 
-# Debug: Write startup info to a separate debug file
-with open('/tmp/invoice_debug.log', 'a') as f:  # nosec B108
-    f.write(f"\n=== {datetime.now()} ===\n")
-    f.write(f"Python: {sys.executable}\n")
-    f.write(f"Python version: {sys.version}\n")
-    f.write(f"Script: {__file__}\n")
-    f.write(f"Args: {sys.argv}\n")
-    f.write(f"PATH: {os.environ.get('PATH', 'NOT SET')}\n")
-    f.write("which invoice-renamer: ")
-    try:
-        result = subprocess.run(['which', 'invoice-renamer'], capture_output=True, text=True, timeout=1)
-        f.write(f"{result.stdout.strip() if result.stdout else 'NOT FOUND'}\n")
-    except Exception:
-        f.write("ERROR\n")
-
 try:
     from titlecase import titlecase  # type: ignore[import-untyped]
 except ImportError:
