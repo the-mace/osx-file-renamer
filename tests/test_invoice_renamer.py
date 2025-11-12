@@ -2,6 +2,7 @@ import pytest
 import os
 import sys
 import subprocess
+import re
 from unittest.mock import patch, MagicMock, mock_open
 import json
 
@@ -124,10 +125,11 @@ class TestExtractInvoiceInfo:
 
         result = extract_invoice_info("/path/to/invoice.pdf")
 
-        # Should return fallback values
+        # Should return fallback values with current date
         assert result["business_name"] == "Unknown"
         assert result["document_type"] == "Document"
-        assert result["invoice_date"] is None
+        # Should use current date as fallback (check format YYYY-MM-DD)
+        assert re.match(r'\d{4}-\d{2}-\d{2}', result["invoice_date"])
 
     @patch('invoice_renamer.call_llm_api')
     def test_extract_invoice_info_api_failure(self, mock_call_api):

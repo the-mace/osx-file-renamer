@@ -193,10 +193,13 @@ def call_llm_api(prompt, file_path, all_pages=False):
 
 def _create_fallback_info():
     """Create fallback invoice info dict when extraction fails"""
+    logger = logging.getLogger(__name__)
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    logger.info(f"Using fallback info with current date: {current_date}")
     return {
         'business_name': 'Unknown',
         'document_type': 'Document',
-        'invoice_date': None,
+        'invoice_date': current_date,
         'invoice_number': None,
         'patient_animal_name': None,
         'account_type': None,
@@ -311,6 +314,11 @@ def extract_invoice_info(file_path, all_pages=False):
         date = _retry_date_extraction(file_path, all_pages)
         if date:
             parsed_info['invoice_date'] = date
+        else:
+            # If still no date found, use current date as fallback
+            current_date = datetime.now().strftime("%Y-%m-%d")
+            parsed_info['invoice_date'] = current_date
+            logger.info(f"No date detected, using current date as fallback: {current_date}")
 
     # Validate and log warnings
     _validate_invoice_data(parsed_info)
