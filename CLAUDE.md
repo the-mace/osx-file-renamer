@@ -138,8 +138,8 @@ The tool uses LiteLLM for flexible LLM provider support. Configuration via envir
 
 **Model Selection**:
 
-- `LLM_MODEL` - Default model to use (optional, defaults to `grok-beta` if `GROK_API_KEY` is set)
-- Examples: `claude-3-5-sonnet-20241022`, `gpt-4`, `gemini-pro`, `grok-beta`
+- `LLM_MODEL` - Default model to use (optional, defaults to `grok-4-1-fast-reasoning` if `GROK_API_KEY` is set)
+- Examples: `claude-3-5-sonnet-20241022`, `gpt-4`, `gemini-pro`, `grok-4-1-fast-reasoning`
 
 **Model Auto-Selection**:
 
@@ -152,7 +152,7 @@ The tool uses LiteLLM for flexible LLM provider support. Configuration via envir
 - Claude: `claude-3-5-sonnet-20241022`, `claude-3-opus-20240229` (Anthropic)
 - GPT: `gpt-4`, `gpt-4-turbo`, `gpt-4-vision-preview` (OpenAI)
 - Gemini: `gemini-pro`, `gemini-pro-vision` (Google)
-- Grok: `grok-beta`, `grok-vision-beta` (xAI)
+- Grok: `grok-4-1-fast-reasoning`, `grok-4-1-fast-non-reasoning`, `grok-beta` (xAI)
 - 100+ more via LiteLLM (see <https://docs.litellm.ai/docs/providers>)
 
 ### External Dependencies
