@@ -107,6 +107,29 @@ class TestRenameInvoiceDocumentTypeSanitization:
         expected = tmp_path / "Bank Checking Statement 1234 20240115.pdf"
         assert expected.exists()
 
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_report_keeps_account_info(self, mock_extract, tmp_path):
+        """Test that reports preserve account info (e.g. Fidelity account reports)."""
+        test_file = tmp_path / "test.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'Fidelity',
+            'document_type': 'Report',
+            'invoice_date': '2026-01-31',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'Rollover IRA',
+            'account_last_4': '9876'
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "Fidelity Rollover IRA Report 9876 20260131.pdf"
+        assert expected.exists()
+
 
 class TestRenameInvoiceAccountNumberValidation:
     """Test account number validation and cleanup."""

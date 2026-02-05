@@ -421,8 +421,8 @@ def _sanitize_document_fields(info):
         if info[key] == "null":
             info[key] = None
 
-    # Only include account details for statements, notices, and letters
-    if info.get('document_type') not in ['Statement', 'Notice', 'Letter']:
+    # Only include account details for statements, reports, notices, and letters
+    if info.get('document_type') not in ['Statement', 'Report', 'Notice', 'Letter']:
         info['account_type'] = None
         info['account_last_4'] = None
 
