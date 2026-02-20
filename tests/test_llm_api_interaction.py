@@ -42,7 +42,7 @@ class TestCallLLMApi:
         mock_completion.assert_called_once()
         call_kwargs = mock_completion.call_args.kwargs
 
-        assert call_kwargs["model"] == "xai/grok-4-1-fast-reasoning"
+        assert call_kwargs["model"] == "xai/grok-4-2"
         assert call_kwargs['messages'] == [{"role": "user", "content": "Test prompt"}]
         assert call_kwargs['stream'] is False
 
@@ -125,7 +125,7 @@ class TestCallLLMApi:
 
         # Verify vision model was used (latest alias)
         call_kwargs = mock_completion.call_args.kwargs
-        assert call_kwargs["model"] == "xai/grok-4-1-fast-reasoning"
+        assert call_kwargs["model"] == "xai/grok-4-2"
 
     @patch('llm_client.read_file_content')
     @patch('llm_client.os.getenv')
@@ -164,7 +164,7 @@ class TestCallLLMApi:
 
         # Verify vision model was used and multiple images were passed (latest alias)
         call_kwargs = mock_completion.call_args.kwargs
-        assert call_kwargs["model"] == "xai/grok-4-1-fast-reasoning"
+        assert call_kwargs["model"] == "xai/grok-4-2"
         messages = call_kwargs['messages']
         assert len(messages) == 1
         # Content should be a list with text and multiple images
