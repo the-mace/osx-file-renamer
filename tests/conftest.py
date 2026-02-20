@@ -86,6 +86,7 @@ def sample_invoice_info():
     return {
         'business_name': 'Test Company',
         'document_type': 'Invoice',
+        'document_title': None,
         'invoice_date': '2024-01-15',
         'invoice_number': '1234',
         'patient_animal_name': None,
@@ -100,6 +101,7 @@ def sample_statement_info():
     return {
         'business_name': 'Chase Bank',
         'document_type': 'Statement',
+        'document_title': None,
         'invoice_date': '2024-01-15',
         'invoice_number': None,
         'patient_animal_name': None,
@@ -114,6 +116,7 @@ def sample_vet_invoice_info():
     return {
         'business_name': 'Veterinary Clinic',
         'document_type': 'Invoice',
+        'document_title': None,
         'invoice_date': '2024-01-15',
         'invoice_number': '9876',
         'patient_animal_name': 'Fluffy',

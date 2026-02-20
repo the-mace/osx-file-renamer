@@ -78,11 +78,19 @@ INVOICE_EXTRACTION_PROMPT = """Extract the following information from this docum
      * Set account_last_4 to null
    - For single account documents: extract the specific account type and last 4 digits
    - For non-financial account documents: leave these null
+7. Document title (only when a specific, formally named title is prominently displayed):
+   - Extract when the document has a clear named title beyond its basic type
+     (e.g., "Automobile Policy Packet", "Annual Privacy Notice", "Explanation of Benefits", "Summary Plan Description")
+   - This title will be used in the filename in place of the generic document type
+   - Do NOT extract for routine invoices, bills, receipts, or standard statements where the document type is a sufficient description
+   - Limit to 5 words maximum
+   - Use null for standard invoices, statements, receipts, and bank documents
 
 Return the response in this exact JSON format:
 {
   "business_name": "Company Name Here",
   "document_type": "Type Here",
+  "document_title": "Specific Title Here or null",
   "invoice_date": "YYYY-MM-DD",
   "invoice_number": "Number Here or null",
   "patient_animal_name": "Name Here or null",
@@ -435,6 +443,7 @@ def _clean_and_validate_fields(info):
     """Clean and validate individual fields from invoice info"""
     business_name = clean_filename(info.get('business_name'), limit_words=4)
     document_type = clean_filename(info.get('document_type')) if info.get('document_type') else 'Document'
+    document_title = clean_filename(info.get('document_title'), limit_words=5) if info.get('document_title') else None
     invoice_date = format_date(info.get('invoice_date'))
 
     # Process invoice number
@@ -477,6 +486,7 @@ def _clean_and_validate_fields(info):
     return {
         'business_name': business_name,
         'document_type': document_type,
+        'document_title': document_title,
         'invoice_date': invoice_date,
         'invoice_number': invoice_number,
         'patient_animal_name': patient_animal_name,
@@ -489,13 +499,17 @@ def _build_filename_parts(fields, file_ext):
     """Build filename parts from cleaned fields"""
     business_name = fields['business_name']
     document_type = fields['document_type']
+    document_title = fields.get('document_title')
     invoice_date = fields['invoice_date']
     invoice_number = fields['invoice_number']
     patient_animal_name = fields['patient_animal_name']
     account_type = fields['account_type']
     account_last_4 = fields['account_last_4']
 
-    # Format: Business Name [Account-Type] Document-Type [Last4] [- Patient/Animal] [Invoice#] Date
+    # Use specific document title when available, otherwise fall back to generic type
+    display_type = document_title if document_title else document_type
+
+    # Format: Business Name [Account-Type] Display-Type [Last4] [- Patient/Animal] [Invoice#] Date
     # For bank-related/credit card documents, insert account type before document type
     should_include_account = (account_type and account_last_4 and
                               account_type.lower() not in ['life insurance', 'annuity', 'vul'])
@@ -503,12 +517,12 @@ def _build_filename_parts(fields, file_ext):
     if should_include_account:
         if account_type.lower() == 'portfolio':
             # Portfolio statement
-            filename_parts = [business_name, account_type, document_type]
+            filename_parts = [business_name, account_type, display_type]
         else:
             # Single account with type and last 4 digits
-            filename_parts = [business_name, account_type, document_type, account_last_4]
+            filename_parts = [business_name, account_type, display_type, account_last_4]
     else:
-        filename_parts = [business_name, document_type]
+        filename_parts = [business_name, display_type]
 
     if patient_animal_name:
         filename_parts.append(f"- {patient_animal_name}")
@@ -695,6 +709,8 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     # Log extracted fields
     logger.info(f"Extracted business name: {fields['business_name']}")
     logger.info(f"Extracted document type: {fields['document_type']}")
+    if fields.get('document_title'):
+        logger.info(f"Extracted document title: {fields['document_title']}")
     logger.info(f"Extracted date: {info.get('invoice_date')} -> {fields['invoice_date']}")
     if fields['invoice_number']:
         logger.info(f"Extracted invoice number: {fields['invoice_number']}")

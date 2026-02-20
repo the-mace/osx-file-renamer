@@ -113,6 +113,30 @@ class TestRenameInvoiceBasic:
         assert (tmp_path / expected_name).exists()
 
     @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_with_document_title(self, mock_extract, tmp_path):
+        """Test that document_title is used in filename instead of generic document type."""
+        test_file = tmp_path / "policy.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'Acme Insurance',
+            'document_type': 'Notice',
+            'document_title': 'Automobile Policy Packet',
+            'invoice_date': '2024-03-15',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected_name = "Acme Insurance Automobile Policy Packet 20240315.pdf"
+        assert (tmp_path / expected_name).exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_dry_run_mode(self, mock_extract, tmp_path, sample_invoice_info, capsys):
         """Test dry run mode doesn't actually rename."""
         test_file = tmp_path / "test.pdf"
