@@ -8,7 +8,7 @@ analysis of various file types including PDFs, images, and documents.
 
 Requirements:
 - LLM_API_KEY environment variable or ~/.env file (provider-specific, e.g., GROK_API_KEY, ANTHROPIC_API_KEY)
-- LLM_MODEL environment variable (optional, defaults to grok-4-2)
+- LLM_MODEL environment variable (optional, defaults to grok-4-1-fast-reasoning)
 - ImageMagick (for image compression)
 - Poppler tools (for PDF processing): pdftotext, pdftoppm, pdfimages
 """
@@ -58,8 +58,8 @@ COMPRESSION_TIMEOUT = 30
 API_TIMEOUT = 120  # 120 seconds for LLM API calls
 MIN_MEANINGFUL_TEXT = 10
 ENV_FILE_PATH = "~/.env"
-DEFAULT_MODEL = "xai/grok-4-2"  # LiteLLM model name for Grok 4.2 (best performance/cost balance)
-VISION_MODEL = "xai/grok-4-2"  # LiteLLM model name for Grok 4.2 with vision
+DEFAULT_MODEL = "xai/grok-4-1-fast-reasoning"  # LiteLLM model name for Grok 4.1 Fast (best performance/cost balance)
+VISION_MODEL = "xai/grok-4-1-fast-reasoning"  # LiteLLM model name for Grok 4.1 with vision
 
 # Supported file extensions
 IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif']
@@ -671,17 +671,16 @@ def call_llm_api(prompt, model=None, file_path=None, all_pages=False, auto_visio
 
     # Convert legacy Grok model names to LiteLLM format (with xai/ prefix)
     model_mapping = {
-        # Legacy names to current Grok 4.2 model
-        "grok-4-2": "xai/grok-4-2",
-        "grok-4-1-fast-reasoning": "xai/grok-4-2",
-        "grok-4-1-fast-non-reasoning": "xai/grok-4-2",
-        "grok-4-fast-reasoning": "xai/grok-4-2",
-        "grok-2-vision-1212": "xai/grok-4-2",
-        "grok-beta": "xai/grok-4-2",
-        "grok-vision-beta": "xai/grok-4-2",
-        "grok-2-1212": "xai/grok-4-2",
-        "grok-3": "xai/grok-4-2",
-        "grok-3-vision": "xai/grok-4-2"
+        # Legacy names to current Grok 4.1 models
+        "grok-4-1-fast-reasoning": "xai/grok-4-1-fast-reasoning",
+        "grok-4-1-fast-non-reasoning": "xai/grok-4-1-fast-non-reasoning",
+        "grok-4-fast-reasoning": "xai/grok-4-1-fast-reasoning",
+        "grok-2-vision-1212": "xai/grok-4-1-fast-reasoning",
+        "grok-beta": "xai/grok-4-1-fast-reasoning",
+        "grok-vision-beta": "xai/grok-4-1-fast-reasoning",
+        "grok-2-1212": "xai/grok-4-1-fast-reasoning",
+        "grok-3": "xai/grok-4-1-fast-reasoning",
+        "grok-3-vision": "xai/grok-4-1-fast-reasoning"
     }
     model = model_mapping.get(model, model)
 
