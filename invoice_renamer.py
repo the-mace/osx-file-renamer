@@ -10,14 +10,25 @@ import logging
 import hashlib
 import shutil
 import tempfile
-
+import PIL.Image
 try:
     from titlecase import titlecase  # type: ignore[import-untyped]
 except ImportError:
     # Fallback if titlecase not available
     def titlecase(text):
         return text.title()
+try:
+    import pillow_heif
+    pillow_heif.register_heif_opener()
+    HAS_PILLOW_HEIF = True
+except ImportError:
+    HAS_PILLOW_HEIF = False
 
+
+PDF_CONVERSION_TIMEOUT = 60
+CONVERTIBLE_IMAGE_EXTENSIONS = ['.heic', '.jpg', '.jpeg', '.png', '.webp', '.tiff', '.tif', '.bmp', '.gif']
+CONVERTIBLE_DOC_EXTENSIONS = ['.docx']
+CONVERTIBLE_EXTENSIONS = CONVERTIBLE_IMAGE_EXTENSIONS + CONVERTIBLE_DOC_EXTENSIONS
 
 # LLM prompt for extracting invoice metadata
 INVOICE_EXTRACTION_PROMPT = """Extract the following information from this document:
@@ -109,6 +120,122 @@ For notices/letters: Look for the date at the top of the document.
 
 Return ONLY the date in YYYY-MM-DD format. If you see a date like "11/3/25", interpret it as MM/DD/YY and convert to YYYY-MM-DD (e.g., "2025-11-03").
 If no date is visible, return "NONE"."""
+
+
+def _find_soffice_cmd():
+    """Find LibreOffice soffice command for DOCX conversion"""
+    for path in [
+        '/Applications/LibreOffice.app/Contents/MacOS/soffice',
+        '/opt/homebrew/bin/soffice',
+        '/usr/local/bin/soffice',
+        '/usr/bin/soffice',
+        '/usr/local/bin/libreoffice',
+        '/usr/bin/libreoffice',
+    ]:
+        if os.path.exists(path):
+            return path
+    for cmd in ['soffice', 'libreoffice']:
+        try:
+            result = subprocess.run(['which', cmd], capture_output=True, text=True, check=True)
+            return result.stdout.strip()
+        except subprocess.CalledProcessError:
+            continue
+    return None
+
+
+def _convert_image_to_pdf_imagemagick(file_path, temp_pdf_path):
+    """Convert image to PDF using ImageMagick as fallback"""
+    logger = logging.getLogger(__name__)
+    try:
+        result = subprocess.run(
+            ['convert', file_path, temp_pdf_path],
+            capture_output=True, text=True, timeout=PDF_CONVERSION_TIMEOUT
+        )
+        if result.returncode == 0 and os.path.exists(temp_pdf_path):
+            logger.info(f"Converted image to PDF via ImageMagick: {temp_pdf_path}")
+            return temp_pdf_path, True
+        logger.error(f"ImageMagick conversion failed: {result.stderr}")
+        return None, False
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
+        logger.error(f"ImageMagick conversion error: {e}")
+        return None, False
+
+
+def _convert_image_to_pdf(file_path, temp_pdf_path):
+    """Convert image file to PDF using Pillow, falling back to ImageMagick"""
+    logger = logging.getLogger(__name__)
+    file_ext = os.path.splitext(file_path)[1].lower()
+
+    if file_ext == '.heic' and not HAS_PILLOW_HEIF:
+        logger.warning("pillow-heif not installed; trying ImageMagick for HEIC conversion")
+        return _convert_image_to_pdf_imagemagick(file_path, temp_pdf_path)
+
+    try:
+        img = PIL.Image.open(file_path)
+        if img.mode not in ('RGB', 'L'):
+            img = img.convert('RGB')
+        img.save(temp_pdf_path, 'PDF', resolution=150)
+        logger.info(f"Converted image to PDF via Pillow: {temp_pdf_path}")
+        return temp_pdf_path, True
+    except Exception as e:
+        logger.warning(f"Pillow conversion failed: {e}; trying ImageMagick")
+        return _convert_image_to_pdf_imagemagick(file_path, temp_pdf_path)
+
+
+def _convert_docx_to_pdf(file_path, temp_pdf_path):
+    """Convert DOCX to PDF using LibreOffice"""
+    logger = logging.getLogger(__name__)
+    soffice_cmd = _find_soffice_cmd()
+    if not soffice_cmd:
+        logger.error("LibreOffice (soffice) not found - required for DOCX conversion")
+        print("Error: LibreOffice is required to convert DOCX files. Install from https://www.libreoffice.org/", file=sys.stderr)
+        return None, False
+
+    try:
+        temp_dir = os.path.dirname(temp_pdf_path)
+        result = subprocess.run(
+            [soffice_cmd, '--headless', '--convert-to', 'pdf', '--outdir', temp_dir, file_path],
+            capture_output=True, text=True, timeout=PDF_CONVERSION_TIMEOUT
+        )
+        if result.returncode != 0:
+            logger.error(f"LibreOffice conversion failed: {result.stderr}")
+            return None, False
+
+        input_basename = os.path.splitext(os.path.basename(file_path))[0]
+        libreoffice_output = os.path.join(temp_dir, f"{input_basename}.pdf")
+        if not os.path.exists(libreoffice_output):
+            logger.error(f"LibreOffice produced no output at {libreoffice_output}")
+            return None, False
+
+        shutil.move(libreoffice_output, temp_pdf_path)
+        logger.info(f"Converted DOCX to PDF via LibreOffice: {temp_pdf_path}")
+        return temp_pdf_path, True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        logger.error(f"LibreOffice conversion error: {e}")
+        return None, False
+
+
+def convert_to_pdf(file_path):
+    """Convert an image or DOCX file to a temporary PDF for analysis and output.
+
+    Returns (pdf_path, is_temp) where is_temp=True means pdf_path is a temporary
+    file that will be renamed/moved by the caller. Returns (None, False) on failure.
+    Returns (file_path, False) if no conversion is needed.
+    """
+    logger = logging.getLogger(__name__)
+    file_ext = os.path.splitext(file_path)[1].lower()
+
+    if file_ext not in CONVERTIBLE_EXTENSIONS:
+        return file_path, False
+
+    logger.info(f"Converting {file_ext} to PDF: {os.path.basename(file_path)}")
+    with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as tmp:
+        temp_pdf_path = tmp.name
+
+    if file_ext in CONVERTIBLE_IMAGE_EXTENSIONS:
+        return _convert_image_to_pdf(file_path, temp_pdf_path)
+    else:
+        return _convert_docx_to_pdf(file_path, temp_pdf_path)
 
 
 def setup_logging():
@@ -663,15 +790,13 @@ def _execute_rename(file_path, new_file_path, move_to, target_dir):
             print(f"Error: Target file '{new_file_path}' already exists", file=sys.stderr)
             return False
 
-    # Rename/move the file
+    # Rename/move the file (shutil.move handles both same-dir renames and cross-filesystem moves)
     try:
+        shutil.move(file_path, new_file_path)
         if move_to:
-            # Use shutil.move for cross-directory moves
-            shutil.move(file_path, new_file_path)
             logger.info(f"Successfully moved and renamed: {file_path} -> {new_file_path}")
             print(f"Renamed {current_filename} to {target_filename} and moved to {os.path.basename(target_dir)}")
         else:
-            os.rename(file_path, new_file_path)
             logger.info(f"Successfully renamed: {file_path} -> {new_file_path}")
             print(f"Renamed {current_filename} to {target_filename}")
         return True
@@ -686,7 +811,11 @@ def _execute_rename(file_path, new_file_path, move_to, target_dir):
 
 
 def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
-    """Rename invoice file based on extracted information and optionally move to target directory"""
+    """Rename invoice file based on extracted information and optionally move to target directory.
+
+    If the file is a convertible format (image or DOCX), it is first converted to PDF,
+    the PDF is renamed to the descriptive name, and the original file is deleted.
+    """
     logger = logging.getLogger(__name__)
     logger.info(f"Starting rename process for: {file_path}")
     logger.info(f"Python environment: {sys.executable}")
@@ -701,8 +830,25 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
 
     logger.debug(f"Processing: {file_path}")
 
-    # Extract and sanitize information
-    info = extract_invoice_info(file_path, all_pages=all_pages)
+    original_ext = os.path.splitext(file_path)[1].lower()
+    needs_conversion = original_ext in CONVERTIBLE_EXTENSIONS
+
+    # Convert to PDF if needed (images/DOCX → PDF for both LLM extraction and output)
+    temp_pdf_path = None
+    processing_file = file_path
+
+    if needs_conversion:
+        logger.info(f"Converting {original_ext} to PDF before processing")
+        converted_path, is_temp = convert_to_pdf(file_path)
+        if converted_path is None:
+            print(f"Error: Could not convert {os.path.basename(file_path)} to PDF", file=sys.stderr)
+            return False
+        processing_file = converted_path
+        if is_temp:
+            temp_pdf_path = converted_path
+
+    # Extract and sanitize information from the (possibly converted) file
+    info = extract_invoice_info(processing_file, all_pages=all_pages)
     _sanitize_document_fields(info)
     fields = _clean_and_validate_fields(info)
 
@@ -721,12 +867,12 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     if fields['account_last_4']:
         logger.info(f"Extracted account last 4: {fields['account_last_4']}")
 
-    # Get file extension and directory
+    # Output is always .pdf for converted files; otherwise preserve original extension
     file_dir = os.path.dirname(file_path)
-    file_ext = os.path.splitext(file_path)[1]
+    output_ext = '.pdf' if needs_conversion else os.path.splitext(file_path)[1]
 
     # Build filename
-    new_filename, invoice_date = _build_filename_parts(fields, file_ext)
+    new_filename, invoice_date = _build_filename_parts(fields, output_ext)
 
     # Determine target directory
     target_dir = move_to if move_to else file_dir
@@ -737,9 +883,14 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
             os.makedirs(move_to, exist_ok=True)
             logger.info(f"Created target directory: {move_to}")
 
-    # Handle duplicate filenames
-    new_file_path = _handle_duplicate_filename(target_dir, new_filename, file_path, invoice_date, file_ext)
+    # Handle duplicate filenames (check against target dir, not temp PDF path)
+    new_file_path = _handle_duplicate_filename(target_dir, new_filename, processing_file, invoice_date, output_ext)
     if new_file_path is None:
+        if temp_pdf_path and os.path.exists(temp_pdf_path):
+            try:
+                os.unlink(temp_pdf_path)
+            except OSError:
+                pass
         return False  # Too many duplicates
 
     new_filename = os.path.basename(new_file_path)
@@ -748,14 +899,36 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     # Handle dry run mode
     if dry_run:
         logger.info("Dry run mode - file not actually renamed")
+        if temp_pdf_path and os.path.exists(temp_pdf_path):
+            try:
+                os.unlink(temp_pdf_path)
+            except OSError:
+                pass
+        action = "Would convert and rename" if needs_conversion else "Would rename"
         if move_to:
-            print(f"Would rename {os.path.basename(file_path)} to {new_filename} and move to {os.path.basename(target_dir)}")
+            print(f"{action} {os.path.basename(file_path)} to {new_filename} and move to {os.path.basename(target_dir)}")
         else:
-            print(f"Would rename {os.path.basename(file_path)} to {new_filename}")
+            print(f"{action} {os.path.basename(file_path)} to {new_filename}")
         return True
 
-    # Execute rename/move
-    return _execute_rename(file_path, new_file_path, move_to, target_dir)
+    # Execute rename/move of the (possibly converted) PDF
+    result = _execute_rename(processing_file, new_file_path, move_to, target_dir)
+
+    if result and needs_conversion:
+        # Delete the original source file now that the PDF has been renamed/moved
+        try:
+            os.unlink(file_path)
+            logger.info(f"Deleted original file after conversion: {file_path}")
+        except OSError as e:
+            logger.warning(f"Could not delete original file {file_path}: {e}")
+    elif not result and temp_pdf_path and os.path.exists(temp_pdf_path):
+        # Rename failed — clean up the temp PDF so we don't leave orphans
+        try:
+            os.unlink(temp_pdf_path)
+        except OSError:
+            pass
+
+    return result
 
 
 def main():

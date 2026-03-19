@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "osx-file-renamer"
-version = "2.3.0"
+version = "2.4.0"
 description = "AI-powered invoice and document file renamer using LLM APIs (Claude, GPT, Grok, Gemini, 100+ others)"
 authors = [
     {name = "Rob"}
@@ -33,6 +33,9 @@ dependencies = [
 
 # Optional dependency groups
 [project.optional-dependencies]
+heic = [
+    "pillow-heif>=0.13.0",
+]
 dev = [
     "pytest>=7.0.0,<9.0.0",
     "pytest-mock>=3.10.0,<4.0.0",

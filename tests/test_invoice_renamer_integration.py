@@ -390,7 +390,7 @@ class TestRenameInvoiceErrorHandling:
 
         mock_extract.return_value = sample_invoice_info
 
-        with patch('os.rename', side_effect=OSError("Permission denied")):
+        with patch('invoice_renamer.shutil.move', side_effect=OSError("Permission denied")):
             result = rename_invoice(str(test_file))
 
             assert result is False
@@ -403,7 +403,7 @@ class TestRenameInvoiceErrorHandling:
 
         mock_extract.return_value = sample_invoice_info
 
-        with patch('os.rename', side_effect=FileExistsError("File exists")):
+        with patch('invoice_renamer.shutil.move', side_effect=FileExistsError("File exists")):
             result = rename_invoice(str(test_file))
 
             assert result is False
