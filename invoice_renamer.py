@@ -32,49 +32,61 @@ CONVERTIBLE_EXTENSIONS = CONVERTIBLE_IMAGE_EXTENSIONS + CONVERTIBLE_DOC_EXTENSIO
 
 # LLM prompt for extracting invoice metadata
 INVOICE_EXTRACTION_PROMPT = """Extract the following information from this document:
-1. Business name - Follow these priority rules:
-   - Use the most recognizable ISSUING company/bank name
-   - For credit card statements: Use the issuing bank (e.g., "American Express", "Chase", "Citibank") - NOT the card product name
-   - For store credit cards: Use the store name (e.g., "Target", "Best Buy") rather than the backing bank
-   - For co-branded cards: Use the co-brand name when the brand is clearly recognizable and prominent (e.g., "JetBlue", "Delta", "Hilton", "Southwest") over the issuing bank
-   - For subsidiaries/billing entities: Use the parent company name if it's more recognizable (e.g., "Tesla" instead of "Blue Skies Solar II, LLC")
-   - For utility bills: Use the main utility company name
-   - For subscription services: Use the service name (e.g., "Netflix", "Spotify")
-   - For bank statements: Use the bank name (e.g., "USAA", "Chase", "Wells Fargo")
-   - Prioritize the brand the customer would recognize over legal billing entities
+1. Business name - Use the most recognizable name of the issuing organization:
+   - Financial: use the brand the customer recognizes over legal entities
+     * Credit card statements: issuing bank (e.g., "American Express", "Chase") - NOT the card product name
+     * Store credit cards: store name (e.g., "Target", "Best Buy") rather than backing bank
+     * Co-branded cards: co-brand when prominent (e.g., "JetBlue", "Delta") over issuing bank
+     * Subsidiaries: parent company if more recognizable (e.g., "Tesla" not "Blue Skies Solar II, LLC")
+     * Utilities: main utility company name
+     * Subscriptions: service name (e.g., "Netflix", "Spotify")
+     * Banks: bank name (e.g., "USAA", "Chase", "Wells Fargo")
+   - Government / institutional: use the specific agency or department name
+     * Federal agencies: "IRS", "Social Security Administration", "Medicare", "USPS"
+     * State/local: "New Jersey DMV", "Tewksbury Township", "Cook County"
+     * Courts: "Superior Court of California", "US District Court"
+   - Healthcare: use the practice or facility name (e.g., "Mayo Clinic", "Dr. Smith Pediatrics")
+   - Education: use the school or institution name (e.g., "Harvard University", "Lincoln Elementary")
+   - Other organizations: HOA name, nonprofit name, employer name, landlord name, etc.
+   - When in doubt, use whatever name appears most prominently at the top of the document
 2. Document type (REQUIRED - use ONE word to classify):
-   - "Invoice" - for bills, invoices requesting payment
-   - "Quote" - for quotes, estimates, proposals, bids, pricing proposals that are not requests for payment
-   - "Statement" - for bank statements, credit card statements, account statements, insurance/annuity statements (if the document says "statement" on it, use this)
-   - "Receipt" - for proof of payment, transaction receipts (NOT trade confirmations)
-   - "Confirmation" - for trade confirmations, order confirmations, transaction confirmations
-   - "Notice" - for notifications, letters, policy changes, account updates
-   - "Letter" - for general correspondence
-   - "Report" - for financial reports, summaries (only use if document explicitly says "report" and not "statement")
-   - "Map" - for property maps, site plans, layout diagrams
+   - "Invoice" - bills, invoices requesting payment
+   - "Quote" - quotes, estimates, proposals, bids not yet requesting payment
+   - "Statement" - bank/credit card/account statements, insurance/annuity statements
+   - "Receipt" - proof of payment, transaction receipts (NOT trade confirmations)
+   - "Confirmation" - trade confirmations, order confirmations, booking confirmations
+   - "Notice" - formal notifications, legal notices, policy change notices, government notices
+   - "Letter" - general correspondence, cover letters, personal letters
+   - "Report" - reports and summaries (only if document explicitly says "report")
+   - "Form" - tax forms, government forms, applications, enrollment forms (W-2, 1099, I-9, etc.)
+   - "Contract" - agreements, leases, service contracts, NDAs, terms of service
+   - "Policy" - insurance policies, privacy policies, employee handbooks
+   - "Certificate" - certificates of completion, warranties, birth/marriage certificates, titles
+   - "Permit" - building permits, parking permits, licenses
+   - "Map" - property maps, site plans, layout diagrams
    - IMPORTANT: If the document contains the word "statement" prominently,
      classify it as "Statement" not "Report"
    - Choose the most specific type that applies
 3. Invoice/statement date (REQUIRED - look carefully):
    - For receipts: Look for the transaction date/time near the top (may be labeled "Date", in the header row, or near business info)
    - For invoices/statements: Look for "Invoice Date", "Statement Date", "Bill Date", "Date", etc.
-   - For notices/letters: Look for the letter date at the top of the document
+   - For notices/letters/forms: Look for the date at the top of the document or the tax/form year
    - Common formats: MM/DD/YY, MM/DD/YYYY, YYYY-MM-DD, Month DD, YYYY
-   - IMPORTANT: Always extract a date if one is visible - receipts, invoices, and statements ALWAYS have dates
+   - IMPORTANT: Always extract a date if one is visible - documents almost always have dates
    - Return in YYYY-MM-DD format
 4. Invoice number (if available):
-   - Look for "Invoice #", "Invoice No.", "Bill #", "Account #", "Reference #", etc.
+   - Look for "Invoice #", "Invoice No.", "Bill #", "Account #", "Reference #", "Case #", "Permit #", etc.
    - Extract just the number/identifier part
-   - For other types of invoices: leave this null if no clear invoice number
-5. Patient or animal name (only for medical/veterinary invoices):
-   - For medical invoices: Extract the patient's name if clearly identified
+   - Leave null if no clear document number is present
+5. Patient or animal name (only for medical/veterinary documents):
+   - For medical invoices/records: Extract the patient's name if clearly identified
    - For veterinary invoices: Look carefully for animal/pet names in:
      * "Animal:" field or column
      * "Pet Name:" field
      * "Patient:" field (in vet contexts)
      * Table columns labeled "Animal", "Pet", or "Patient"
      * Any clearly identified animal/pet name in the document
-   - For other types of invoices: leave this null
+   - For other document types: leave this null
 6. Account details (for bank statements, credit card statements, notices, and letters):
    - Account type: Look for the SPECIFIC account type category (not generic or product names):
      * Bank accounts: "Checking", "Savings", "Money Market", "CD", "IRA"
@@ -89,13 +101,16 @@ INVOICE_EXTRACTION_PROMPT = """Extract the following information from this docum
      * Set account_last_4 to null
    - For single account documents: extract the specific account type and last 4 digits
    - For non-financial account documents: leave these null
-7. Document title (only when a specific, formally named title is prominently displayed):
-   - Extract when the document has a clear named title beyond its basic type
-     (e.g., "Automobile Policy Packet", "Annual Privacy Notice", "Explanation of Benefits", "Summary Plan Description")
-   - This title will be used in the filename in place of the generic document type
-   - Do NOT extract for routine invoices, bills, receipts, or standard statements where the document type is a sufficient description
-   - Limit to 5 words maximum
-   - Use null for standard invoices, statements, receipts, and bank documents
+7. Document title - extract a descriptive title that adds meaning beyond the document type:
+   - ALWAYS extract for: government notices, legal documents, tax forms, certificates, permits,
+     contracts, policies, and any non-routine document where the type alone is not descriptive enough
+     (e.g., "Tax Delinquent Notice", "W-2 Wage Statement", "Lease Agreement", "Birth Certificate",
+     "Explanation of Benefits", "Annual Privacy Notice", "Building Permit")
+   - Extract for financial docs only when a specific named title is prominently displayed
+     (e.g., "Automobile Policy Packet", "Summary Plan Description")
+   - Use null for routine invoices, bills, receipts, and standard bank/credit card statements
+     where the business name + document type is already fully descriptive
+   - Limit to 5 words maximum; use title case
 
 Return the response in this exact JSON format:
 {
@@ -556,8 +571,9 @@ def _sanitize_document_fields(info):
         if info[key] == "null":
             info[key] = None
 
-    # Only include account details for statements, reports, notices, and letters
-    if info.get('document_type') not in ['Statement', 'Report', 'Notice', 'Letter']:
+    # Only include account details for document types that reference financial accounts
+    account_detail_types = ['Statement', 'Report', 'Notice', 'Letter', 'Policy', 'Contract']
+    if info.get('document_type') not in account_detail_types:
         info['account_type'] = None
         info['account_last_4'] = None
 
