@@ -8,7 +8,7 @@ analysis of various file types including PDFs, images, and documents.
 
 Requirements:
 - LLM_API_KEY environment variable or ~/.env file (provider-specific, e.g., GROK_API_KEY, ANTHROPIC_API_KEY)
-- LLM_MODEL environment variable (optional, defaults to grok-4.20-0309-reasoning)
+- LLM_MODEL environment variable (optional, defaults to grok-4.3)
 - ImageMagick (for image compression)
 - Poppler tools (for PDF processing): pdftotext, pdftoppm, pdfimages
 """
@@ -58,8 +58,8 @@ COMPRESSION_TIMEOUT = 30
 API_TIMEOUT = 120  # 120 seconds for LLM API calls
 MIN_MEANINGFUL_TEXT = 10
 ENV_FILE_PATH = "~/.env"
-DEFAULT_MODEL = "xai/grok-4.20-0309-reasoning"  # LiteLLM model name for Grok 4.20 reasoning
-VISION_MODEL = "xai/grok-4.20-0309-reasoning"  # LiteLLM model name for Grok 4.20 reasoning with vision
+DEFAULT_MODEL = "xai/grok-4.3"  # LiteLLM model name for Grok 4.3 reasoning
+VISION_MODEL = "xai/grok-4.3"  # LiteLLM model name for Grok 4.3 reasoning with vision
 
 # Supported file extensions
 IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif']
