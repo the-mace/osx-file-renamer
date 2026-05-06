@@ -8,7 +8,7 @@ analysis of various file types including PDFs, images, and documents.
 
 Requirements:
 - LLM_API_KEY environment variable or ~/.env file (provider-specific, e.g., GROK_API_KEY, ANTHROPIC_API_KEY)
-- LLM_MODEL environment variable (optional, defaults to grok-4-1-fast-reasoning)
+- LLM_MODEL environment variable (optional, defaults to grok-4.20-0309-reasoning)
 - ImageMagick (for image compression)
 - Poppler tools (for PDF processing): pdftotext, pdftoppm, pdfimages
 """
@@ -58,8 +58,8 @@ COMPRESSION_TIMEOUT = 30
 API_TIMEOUT = 120  # 120 seconds for LLM API calls
 MIN_MEANINGFUL_TEXT = 10
 ENV_FILE_PATH = "~/.env"
-DEFAULT_MODEL = "xai/grok-4-1-fast-reasoning"  # LiteLLM model name for Grok 4.1 Fast (best performance/cost balance)
-VISION_MODEL = "xai/grok-4-1-fast-reasoning"  # LiteLLM model name for Grok 4.1 with vision
+DEFAULT_MODEL = "xai/grok-4.20-0309-reasoning"  # LiteLLM model name for Grok 4.20 reasoning
+VISION_MODEL = "xai/grok-4.20-0309-reasoning"  # LiteLLM model name for Grok 4.20 reasoning with vision
 
 # Supported file extensions
 IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif']
@@ -671,16 +671,18 @@ def call_llm_api(prompt, model=None, file_path=None, all_pages=False, auto_visio
 
     # Convert legacy Grok model names to LiteLLM format (with xai/ prefix)
     model_mapping = {
-        # Legacy names to current Grok 4.1 models
-        "grok-4-1-fast-reasoning": "xai/grok-4-1-fast-reasoning",
-        "grok-4-1-fast-non-reasoning": "xai/grok-4-1-fast-non-reasoning",
-        "grok-4-fast-reasoning": "xai/grok-4-1-fast-reasoning",
-        "grok-2-vision-1212": "xai/grok-4-1-fast-reasoning",
-        "grok-beta": "xai/grok-4-1-fast-reasoning",
-        "grok-vision-beta": "xai/grok-4-1-fast-reasoning",
-        "grok-2-1212": "xai/grok-4-1-fast-reasoning",
-        "grok-3": "xai/grok-4-1-fast-reasoning",
-        "grok-3-vision": "xai/grok-4-1-fast-reasoning"
+        # Legacy names to current Grok 4.3 (reasoning) / 4.20 (non-reasoning)
+        "grok-4-1-fast-reasoning": "xai/grok-4.3",
+        "grok-4-1-fast-non-reasoning": "xai/grok-4.20-0309-non-reasoning",
+        "grok-4-fast-reasoning": "xai/grok-4.3",
+        "grok-4-fast-non-reasoning": "xai/grok-4.20-0309-non-reasoning",
+        "grok-4-0709": "xai/grok-4.3",
+        "grok-2-vision-1212": "xai/grok-4.3",
+        "grok-beta": "xai/grok-4.3",
+        "grok-vision-beta": "xai/grok-4.3",
+        "grok-2-1212": "xai/grok-4.3",
+        "grok-3": "xai/grok-4.3",
+        "grok-3-vision": "xai/grok-4.3"
     }
     model = model_mapping.get(model, model)
 
@@ -773,7 +775,7 @@ Examples:
     parser.add_argument("prompt", help="The input prompt to send to the LLM")
     parser.add_argument("--model", default=None,
                         help="The model to use (default: from LLM_MODEL env). "
-                             "Examples: claude-3-5-sonnet-20241022, gpt-4, gemini-pro, grok-beta")
+                             "Examples: claude-3-5-sonnet-20241022, gpt-4, gemini-pro, grok-4.3")
     parser.add_argument("--file", help="Optional file to include (PDFs auto-fallback text→vision, text files use text model, images use vision model)")
     parser.add_argument("--all-pages", action="store_true",
                         help="Process all pages of PDF (default: first page only)")
