@@ -9,6 +9,7 @@ from datetime import datetime
 import logging
 import hashlib
 import shutil
+import glob
 import tempfile
 import PIL.Image
 try:
@@ -111,6 +112,27 @@ INVOICE_EXTRACTION_PROMPT = """Extract the following information from this docum
    - Use null for routine invoices, bills, receipts, and standard bank/credit card statements
      where the business name + document type is already fully descriptive
    - Limit to 5 words maximum; use title case
+8. USDF Dressage test scorecard fields (only for USDF/United States Dressage Federation scorecards):
+   - If this document is a USDF dressage test scorecard, set document_type to "Test" and extract:
+     * usdf_test_name: Abbreviated test name — ALWAYS omit the word "Level", use title case:
+       - "2023 USDF INTRODUCTORY LEVEL – TEST A" → "USDF Introductory A"
+       - "2023 USEF TRAINING LEVEL TEST 1" → "USDF Training 1"
+       - "2023 USEF FIRST LEVEL TEST 1" → "USDF First 1"
+       - "2023 USEF SECOND LEVEL TEST 2" → "USDF Second 2"
+       - "2023 USEF THIRD LEVEL TEST 3" → "USDF Third 3"
+       - "USDF PRIX ST. GEORGES" → "USDF Prix St Georges"
+       - CRITICAL: Never include the word "Level" in usdf_test_name
+     * usdf_rider_number: Competitor/entry number — REQUIRED, always present on scorecards
+       - Page 1: look for a box labeled "ENTRY NO." or "NO." at the top right of the sheet
+       - Page 2: the front cover appears ROTATED 90°; look sideways for:
+         * "Entry No." or "No." field
+         * "Name and Number of Horse" field — the entry number is BEFORE the horse name
+           (e.g. "16 Fiddy" → entry number is "16", horse name is "Fiddy")
+       - Extract just the digits (e.g., "16", "28", "70", "99", "22")
+     * usdf_rider_name: Rider's full name — REQUIRED
+       - Labeled "Name of Rider" on the rotated test cover visible in the lower portion of page 2
+       - Not the horse name (horse name is separate)
+   - For non-USDF documents: set all three fields to null
 
 Return the response in this exact JSON format:
 {
@@ -121,10 +143,28 @@ Return the response in this exact JSON format:
   "invoice_number": "Number Here or null",
   "patient_animal_name": "Name Here or null",
   "account_type": "Account Type Here or null",
-  "account_last_4": "Last 4 digits or null"
+  "account_last_4": "Last 4 digits or null",
+  "usdf_test_name": "USDF Introductory A or null",
+  "usdf_rider_number": "Competitor number or null",
+  "usdf_rider_name": "Rider full name or null"
 }
 
 If you cannot find any piece of information, use null for that field."""
+
+
+def send_notification(title, message):
+    """Send a macOS notification via osascript"""
+    logger = logging.getLogger(__name__)
+    try:
+        safe_title = title.replace('"', '\\"')
+        safe_message = message.replace('"', '\\"')
+        subprocess.run(
+            ['osascript', '-e', f'display notification "{safe_message}" with title "{safe_title}"'],
+            capture_output=True, timeout=5
+        )
+        logger.info(f"Notification sent: {title} — {message}")
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
+        logger.warning(f"Could not send notification: {e}")
 
 
 # Focused date extraction prompt
@@ -135,6 +175,35 @@ For notices/letters: Look for the date at the top of the document.
 
 Return ONLY the date in YYYY-MM-DD format. If you see a date like "11/3/25", interpret it as MM/DD/YY and convert to YYYY-MM-DD (e.g., "2025-11-03").
 If no date is visible, return "NONE"."""
+
+
+USDF_PAGE2_PROMPT = """This image is the front cover of a USDF/USEF dressage test booklet. Extract:
+- Test name (e.g. "2023 USDF INTRODUCTORY LEVEL – TEST A") — abbreviate to omit "Level":
+  "USDF Introductory A", "USDF Training 1", "USDF First 1", "USDF Second 2", "USDF Third 3"
+  CRITICAL: Never include the word "Level" in the test name.
+- Entry/competitor number — digits only (e.g. "16", "81", "28", "99").
+  Look in these places:
+  * A box or field labeled "Entry No." or "No."
+  * The "Name and Number of Horse" field — the number appears BEFORE the horse name,
+    e.g. "16 Fiddy" means entry number is "16" and horse name is "Fiddy"
+  IMPORTANT: Extract ONLY the entry number digits. Do not combine with nearby date digits.
+- Rider's full name from the "Name of Rider" field (not the horse name)
+- Competition date visible on this cover
+
+Return ONLY this JSON (no markdown, no code block):
+{
+  "business_name": "USDF",
+  "document_type": "Test",
+  "document_title": null,
+  "invoice_date": "YYYY-MM-DD or null",
+  "invoice_number": null,
+  "patient_animal_name": null,
+  "account_type": null,
+  "account_last_4": null,
+  "usdf_test_name": "USDF Test Name or null",
+  "usdf_rider_number": "digits only or null",
+  "usdf_rider_name": "Full Name or null"
+}"""
 
 
 def _find_soffice_cmd():
@@ -385,8 +454,8 @@ def _parse_llm_response(response):
         return None
 
     try:
-        # Look for JSON in the response
-        json_match = re.search(r'\{[^}]*"business_name"[^}]*\}', response, re.DOTALL)
+        # Look for JSON in the response (must contain business_name or usdf_test_name)
+        json_match = re.search(r'\{[^}]*"(?:business_name|usdf_test_name)"[^}]*\}', response, re.DOTALL)
         if json_match:
             json_str = json_match.group()
             parsed_info = json.loads(json_str)
@@ -444,6 +513,56 @@ def _validate_invoice_data(parsed_info):
         parsed_info['document_type'] = 'Document'
 
 
+def _find_pdftoppm():
+    """Find pdftoppm command in common locations"""
+    for path in ['/opt/homebrew/bin/pdftoppm', '/usr/bin/pdftoppm', '/usr/local/bin/pdftoppm']:
+        if os.path.exists(path):
+            return path
+    try:
+        result = subprocess.run(['which', 'pdftoppm'], capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return None
+
+
+def _extract_usdf_page2_rotated(pdf_path):
+    """Extract page 2 from a USDF scorecard PDF, rotate 90° CCW, return temp JPEG path.
+
+    The test booklet cover is stapled rotated on page 2; rotating corrects orientation for OCR.
+    Caller is responsible for deleting the returned temp file.
+    """
+    logger = logging.getLogger(__name__)
+    pdftoppm_cmd = _find_pdftoppm()
+    if not pdftoppm_cmd:
+        logger.warning("pdftoppm not found; cannot extract USDF page 2")
+        return None
+
+    tmpdir = tempfile.mkdtemp(prefix='usdf_p2_')
+    try:
+        temp_prefix = os.path.join(tmpdir, 'page')
+        subprocess.run(
+            [pdftoppm_cmd, '-f', '2', '-l', '2', '-jpeg', '-r', '200', pdf_path, temp_prefix],
+            capture_output=True, timeout=PDF_CONVERSION_TIMEOUT
+        )
+        candidates = glob.glob(os.path.join(tmpdir, 'page*.jpg'))
+        if not candidates:
+            logger.warning("pdftoppm produced no output for USDF page 2")
+            return None
+
+        img = PIL.Image.open(sorted(candidates)[0])
+        rotated = img.rotate(90, expand=True)
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False, prefix='usdf_rotated_') as f:
+            rotated_path = f.name
+        rotated.save(rotated_path, 'JPEG', quality=95)
+        logger.info(f"Extracted and rotated USDF page 2: {rotated_path}")
+        return rotated_path
+    except Exception as e:
+        logger.error(f"Failed to extract/rotate USDF page 2: {e}")
+        return None
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 def extract_invoice_info(file_path, all_pages=False):
     """Extract business name and date from invoice using LLM"""
     logger = logging.getLogger(__name__)
@@ -458,6 +577,29 @@ def extract_invoice_info(file_path, all_pages=False):
     parsed_info = _parse_llm_response(response)
     if parsed_info is None:
         return _create_fallback_info()
+
+    # USDF test: if rider info is incomplete, extract page 2 rotated 90° and re-OCR the cover
+    if (parsed_info.get('usdf_test_name') and
+            not all_pages and
+            (not parsed_info.get('usdf_rider_name') or not parsed_info.get('usdf_rider_number'))):
+        logger.info("USDF test detected with incomplete rider info; extracting page 2 rotated for OCR")
+        page2_path = _extract_usdf_page2_rotated(file_path)
+        if page2_path:
+            try:
+                retry_response = call_llm_api(USDF_PAGE2_PROMPT, page2_path)
+                if retry_response:
+                    retry_info = _parse_llm_response(retry_response)
+                    if retry_info:
+                        # Merge: don't lose fields that page 1 found but page 2 missed
+                        for field in ('usdf_test_name', 'usdf_rider_number', 'usdf_rider_name', 'invoice_date'):
+                            if not retry_info.get(field) and parsed_info.get(field):
+                                retry_info[field] = parsed_info[field]
+                        parsed_info = retry_info
+            finally:
+                try:
+                    os.unlink(page2_path)
+                except OSError:
+                    pass
 
     # If date is missing, try a focused follow-up query to extract it
     if not parsed_info.get('invoice_date'):
@@ -626,6 +768,10 @@ def _clean_and_validate_fields(info):
     else:
         account_last_4 = None
 
+    usdf_test_name = clean_filename(info.get('usdf_test_name')) if info.get('usdf_test_name') else None
+    usdf_rider_number = clean_filename(info.get('usdf_rider_number')) if info.get('usdf_rider_number') else None
+    usdf_rider_name = clean_filename(info.get('usdf_rider_name')) if info.get('usdf_rider_name') else None
+
     return {
         'business_name': business_name,
         'document_type': document_type,
@@ -634,7 +780,10 @@ def _clean_and_validate_fields(info):
         'invoice_number': invoice_number,
         'patient_animal_name': patient_animal_name,
         'account_type': account_type,
-        'account_last_4': account_last_4
+        'account_last_4': account_last_4,
+        'usdf_test_name': usdf_test_name,
+        'usdf_rider_number': usdf_rider_number,
+        'usdf_rider_name': usdf_rider_name,
     }
 
 
@@ -648,6 +797,22 @@ def _build_filename_parts(fields, file_ext):
     patient_animal_name = fields['patient_animal_name']
     account_type = fields['account_type']
     account_last_4 = fields['account_last_4']
+    usdf_test_name = fields.get('usdf_test_name')
+    usdf_rider_number = fields.get('usdf_rider_number')
+    usdf_rider_name = fields.get('usdf_rider_name')
+
+    # USDF dressage test: "<test name> [- <rider number>] [- <rider name>] <date>"
+    if usdf_test_name:
+        date_part = f" {invoice_date}" if invoice_date and invoice_date != "00000000" else ""
+        if usdf_rider_number and usdf_rider_name:
+            new_filename = f"{usdf_test_name} - {usdf_rider_number} - {usdf_rider_name}{date_part}{file_ext}"
+        elif usdf_rider_name:
+            new_filename = f"{usdf_test_name} - {usdf_rider_name}{date_part}{file_ext}"
+        elif usdf_rider_number:
+            new_filename = f"{usdf_test_name} - {usdf_rider_number}{date_part}{file_ext}"
+        else:
+            new_filename = f"{usdf_test_name}{date_part}{file_ext}"
+        return new_filename, invoice_date
 
     # Use specific document title when available, otherwise fall back to generic type
     display_type = document_title if document_title else document_type
@@ -868,6 +1033,19 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     _sanitize_document_fields(info)
     fields = _clean_and_validate_fields(info)
 
+    # USDF tests: competition date is always today; warn and override if date differs
+    if fields.get('usdf_test_name'):
+        today = datetime.now().strftime("%Y%m%d")
+        extracted_date = fields['invoice_date']
+        if extracted_date != today:
+            logger.warning(f"USDF date mismatch: extracted {extracted_date}, expected today {today}; overriding")
+            send_notification(
+                "Invoice Renamer",
+                f"USDF date mismatch for {os.path.basename(file_path)}: "
+                f"scorecard shows {extracted_date}, using today {today}"
+            )
+            fields['invoice_date'] = today
+
     # Log extracted fields
     logger.info(f"Extracted business name: {fields['business_name']}")
     logger.info(f"Extracted document type: {fields['document_type']}")
@@ -882,6 +1060,12 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
         logger.info(f"Extracted account type: {fields['account_type']}")
     if fields['account_last_4']:
         logger.info(f"Extracted account last 4: {fields['account_last_4']}")
+    if fields.get('usdf_test_name'):
+        logger.info(f"Extracted USDF test name: {fields['usdf_test_name']}")
+    if fields.get('usdf_rider_number'):
+        logger.info(f"Extracted USDF rider number: {fields['usdf_rider_number']}")
+    if fields.get('usdf_rider_name'):
+        logger.info(f"Extracted USDF rider name: {fields['usdf_rider_name']}")
 
     # Output is always .pdf for converted files; otherwise preserve original extension
     file_dir = os.path.dirname(file_path)
