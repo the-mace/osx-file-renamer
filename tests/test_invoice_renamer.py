@@ -854,14 +854,18 @@ class TestUsdfDressageTest:
     @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_usdf_dry_run(self, mock_extract, tmp_path, capsys):
         """rename_invoice dry-run with USDF scorecard shows correct target name."""
-        src = tmp_path / "dressage test scores 20260613.pdf"
+        # USDF competition date is always overridden to today, so the mocked
+        # extraction date must be today's date to avoid the mismatch override.
+        today = datetime.now().strftime("%Y-%m-%d")
+        today_compact = datetime.now().strftime("%Y%m%d")
+        src = tmp_path / f"dressage test scores {today_compact}.pdf"
         src.write_bytes(b"%PDF")
 
         mock_extract.return_value = {
             'business_name': 'USDF',
             'document_type': 'Test',
             'document_title': None,
-            'invoice_date': '2026-06-13',
+            'invoice_date': today,
             'invoice_number': None,
             'patient_animal_name': None,
             'account_type': None,
@@ -875,7 +879,7 @@ class TestUsdfDressageTest:
 
         assert result is True
         captured = capsys.readouterr()
-        assert "USDF Introductory A - 99 - Alex Rider 20260613.pdf" in captured.out
+        assert f"USDF Introductory A - 99 - Alex Rider {today_compact}.pdf" in captured.out
 
     @patch('invoice_renamer.send_notification')
     @patch('invoice_renamer.extract_invoice_info')

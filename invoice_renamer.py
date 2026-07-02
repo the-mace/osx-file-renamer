@@ -111,6 +111,12 @@ INVOICE_EXTRACTION_PROMPT = """Extract the following information from this docum
      (e.g., "Automobile Policy Packet", "Summary Plan Description")
    - Use null for routine invoices, bills, receipts, and standard bank/credit card statements
      where the business name + document type is already fully descriptive
+   - If the document covers multiple related items (e.g., a bill combining several insurance
+     policies, or a statement spanning several linked accounts), synthesize a short title
+     describing the coverage (e.g., "Auto and Property Insurance Statement") even if that exact
+     phrase isn't printed verbatim — base it on what the document actually lists. If an original
+     filename hint is provided below, use it only as a starting point and verify it against the
+     document's actual content; correct or expand it rather than copying it blindly
    - Limit to 5 words maximum; use title case
 8. USDF Dressage test scorecard fields (only for USDF/United States Dressage Federation scorecards):
    - If this document is a USDF dressage test scorecard, set document_type to "Test" and extract:
@@ -150,6 +156,45 @@ Return the response in this exact JSON format:
 }
 
 If you cannot find any piece of information, use null for that field."""
+
+# Original filenames that are camera/scanner defaults or bare numbers carry no useful signal
+GENERIC_FILENAME_PATTERNS = [
+    r'^(img|image|photo|pic|scan|doc|document|file|untitled|screenshot|dsc)\s*\d*$',
+    r'^\d+$',
+]
+
+
+def _original_filename_hint(file_path):
+    """Build a human-readable hint from the original filename, or None if it's not useful.
+
+    Strips leading date prefixes (often added by Shortcuts/automations) and separators,
+    then filters out generic camera/scanner names that wouldn't help the LLM.
+    """
+    name = os.path.splitext(os.path.basename(file_path))[0]
+    name = re.sub(r'^\d{4}[-_]\d{2}[-_]\d{2}[_\-\s]*', '', name)
+    name = re.sub(r'^\d{8}[_\-\s]*', '', name)
+    name = re.sub(r'[_\-]+', ' ', name).strip()
+    name = re.sub(r'\s+', ' ', name)
+    if not name or len(name) < 4:
+        return None
+    for pattern in GENERIC_FILENAME_PATTERNS:
+        if re.match(pattern, name, re.IGNORECASE):
+            return None
+    return name
+
+
+def _build_extraction_prompt(filename_hint=None):
+    """Build the invoice extraction prompt, optionally including the original filename as a hint"""
+    if not filename_hint:
+        return INVOICE_EXTRACTION_PROMPT
+    hint_block = (
+        f'The file\'s original name (before renaming) was "{filename_hint}". This may hint at the '
+        'business, document type, or specific content (e.g. multiple items covered by one '
+        'statement), but it can also be generic, wrong, or incomplete — verify everything against '
+        'the actual document and use it only to sharpen field 7 (document title) or catch details '
+        'you might otherwise miss.\n\n'
+    )
+    return hint_block + INVOICE_EXTRACTION_PROMPT
 
 
 def send_notification(title, message):
@@ -426,11 +471,12 @@ def _create_fallback_info():
     }
 
 
-def _call_llm_for_invoice_info(file_path, all_pages=False):
+def _call_llm_for_invoice_info(file_path, all_pages=False, filename_hint=None):
     """Call LLM API to extract invoice information"""
     logger = logging.getLogger(__name__)
     try:
-        response = call_llm_api(INVOICE_EXTRACTION_PROMPT, file_path, all_pages=all_pages)
+        prompt = _build_extraction_prompt(filename_hint)
+        response = call_llm_api(prompt, file_path, all_pages=all_pages)
         return response
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         logger.error(f"Failed to call LLM API: {e}")
@@ -563,13 +609,15 @@ def _extract_usdf_page2_rotated(pdf_path):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def extract_invoice_info(file_path, all_pages=False):
+def extract_invoice_info(file_path, all_pages=False, filename_hint=None):
     """Extract business name and date from invoice using LLM"""
     logger = logging.getLogger(__name__)
     logger.info(f"Extracting invoice info from: {file_path}")
+    if filename_hint:
+        logger.info(f"Using original filename as hint: {filename_hint}")
 
     # Call LLM API
-    response = _call_llm_for_invoice_info(file_path, all_pages)
+    response = _call_llm_for_invoice_info(file_path, all_pages, filename_hint)
     if response is None:
         return _create_fallback_info()
 
@@ -1029,7 +1077,8 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
             temp_pdf_path = converted_path
 
     # Extract and sanitize information from the (possibly converted) file
-    info = extract_invoice_info(processing_file, all_pages=all_pages)
+    filename_hint = _original_filename_hint(file_path)
+    info = extract_invoice_info(processing_file, all_pages=all_pages, filename_hint=filename_hint)
     _sanitize_document_fields(info)
     fields = _clean_and_validate_fields(info)
 
