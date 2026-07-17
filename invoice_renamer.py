@@ -32,24 +32,25 @@ CONVERTIBLE_DOC_EXTENSIONS = ['.docx']
 CONVERTIBLE_EXTENSIONS = CONVERTIBLE_IMAGE_EXTENSIONS + CONVERTIBLE_DOC_EXTENSIONS
 
 # LLM prompt for extracting invoice metadata
-INVOICE_EXTRACTION_PROMPT = """Extract the following information from this document:
-1. Business name - Use the most recognizable name of the issuing organization:
-   - Financial: use the brand the customer recognizes over legal entities
-     * Credit card statements: issuing bank (e.g., "American Express", "Chase") - NOT the card product name
-     * Store credit cards: store name (e.g., "Target", "Best Buy") rather than backing bank
-     * Co-branded cards: co-brand when prominent (e.g., "JetBlue", "Delta") over issuing bank
-     * Subsidiaries: parent company if more recognizable (e.g., "Tesla" not "Blue Skies Solar II, LLC")
-     * Utilities: main utility company name
-     * Subscriptions: service name (e.g., "Netflix", "Spotify")
-     * Banks: bank name (e.g., "USAA", "Chase", "Wells Fargo")
-   - Government / institutional: use the specific agency or department name
-     * Federal agencies: "IRS", "Social Security Administration", "Medicare", "USPS"
-     * State/local: "New Jersey DMV", "Tewksbury Township", "Cook County"
-     * Courts: "Superior Court of California", "US District Court"
-   - Healthcare: use the practice or facility name (e.g., "Mayo Clinic", "Dr. Smith Pediatrics")
-   - Education: use the school or institution name (e.g., "Harvard University", "Lincoln Elementary")
-   - Other organizations: HOA name, nonprofit name, employer name, landlord name, etc.
-   - When in doubt, use whatever name appears most prominently at the top of the document
+# Priority for filenames: short Vendor → Topic → short AccountId → Date (low PII, concise)
+INVOICE_EXTRACTION_PROMPT = """Extract the following information from this document.
+Priority fields for the filename (in order): Vendor, Topic, Account identifier, Date.
+Keep names SHORT — filenames should be concise and recognizable, not legal full names.
+
+1. Business name (Vendor) - SHORT recognizable brand, not the full legal entity:
+   - Prefer common short forms: "Amex" not "American Express"; "BofA" not "Bank of America";
+     "Chase" not "JPMorgan Chase Bank, N.A."; "WF" is OK for Wells Fargo if space is tight, else "Wells Fargo"
+   - Financial: brand the customer recognizes (issuing bank for CC statements, NOT the card product name)
+     * Store credit cards: store name ("Target", "Best Buy") rather than backing bank
+     * Co-branded cards: co-brand when prominent ("JetBlue", "Delta") over issuing bank
+     * Subsidiaries: parent if more recognizable ("Tesla" not "Blue Skies Solar II, LLC")
+     * Subscriptions: service name ("Netflix", "Spotify")
+     * Banks: short bank name ("USAA", "Chase", "Citi")
+   - Government / institutional: specific short agency name ("IRS", "SSA", "Medicare", "USPS",
+     "NJ DMV", "Tewksbury Township")
+   - Healthcare / education / other: practice, school, HOA, employer — short form
+   - When in doubt, use the most prominent short name at the top of the document
+   - Limit to about 3–4 words maximum
 2. Document type (REQUIRED - use ONE word to classify):
    - "Invoice" - bills, invoices requesting payment
    - "Quote" - quotes, estimates, proposals, bids not yet requesting payment
@@ -68,17 +69,17 @@ INVOICE_EXTRACTION_PROMPT = """Extract the following information from this docum
    - IMPORTANT: If the document contains the word "statement" prominently,
      classify it as "Statement" not "Report"
    - Choose the most specific type that applies
-3. Invoice/statement date (REQUIRED - look carefully):
+3. Invoice/statement date (REQUIRED - look carefully; page 1 may be a cover — check content pages too):
    - For receipts: Look for the transaction date/time near the top (may be labeled "Date", in the header row, or near business info)
    - For invoices/statements: Look for "Invoice Date", "Statement Date", "Bill Date", "Date", etc.
    - For notices/letters/forms: Look for the date at the top of the document or the tax/form year
    - Common formats: MM/DD/YY, MM/DD/YYYY, YYYY-MM-DD, Month DD, YYYY
    - IMPORTANT: Always extract a date if one is visible - documents almost always have dates
    - Return in YYYY-MM-DD format
-4. Invoice number (if available):
-   - Look for "Invoice #", "Invoice No.", "Bill #", "Account #", "Reference #", "Case #", "Permit #", etc.
-   - Extract just the number/identifier part
-   - Leave null if no clear document number is present
+4. Invoice number (if available) - short reference only, not full account numbers:
+   - Look for "Invoice #", "Invoice No.", "Bill #", "Reference #", "Case #", "Permit #", etc.
+   - Alphanumeric IDs are fine (e.g., "ACS12B4", "INV88421") if short
+   - Leave null if no clear document number is present; never put a full account/card number here
 5. Patient or animal name (only for medical/veterinary documents):
    - For medical invoices/records: Extract the patient's name if clearly identified
    - For veterinary invoices: Look carefully for animal/pet names in:
@@ -94,30 +95,30 @@ INVOICE_EXTRACTION_PROMPT = """Extract the following information from this docum
      * Credit cards: "Credit Card" (or specific tier like "Platinum", "Gold" if clearly labeled as such)
      * Insurance/Investment accounts: Use specific types like "Annuity", "VUL", "Life Insurance", "Brokerage", "401k" (NOT generic terms like "Investment Account" or "Account")
      * If only generic "Account" or "Investment Account" is found, leave this null
-   - Last 4 digits: Extract the last 4 digits of the account/card number
-     (look for patterns like "xxxx1234", "ending in 1234", "account ending in 1234", "2-51000" means last 4 is "1000")
+   - Account identifier (account_last_4): SHORT id for filenames — low PII
+     * Prefer last 4 digits of account/card (xxxx1234, ending in 1234, "2-51000" → "1000")
+     * Short alphanumeric refs OK (e.g. "A12B") — never full account/card numbers
    - Extract these even from notices/letters if they reference a specific account
    - IMPORTANT: If this is a portfolio summary or overview showing MULTIPLE accounts (2 or more different account numbers):
      * Set account_type to "Portfolio"
      * Set account_last_4 to null
-   - For single account documents: extract the specific account type and last 4 digits
+   - For single account documents: extract the specific account type and short account id
    - For non-financial account documents: leave these null
-7. Document title - extract a descriptive title that adds meaning beyond the document type:
+7. Document title (Topic) - short descriptive topic that adds meaning beyond document type:
+   - Prefer 2–4 words; this becomes the "topic" part of the filename when more specific than type alone
    - ALWAYS extract for: government notices, legal documents, tax forms, certificates, permits,
      contracts, policies, and any non-routine document where the type alone is not descriptive enough
-     (e.g., "Tax Delinquent Notice", "W-2 Wage Statement", "Lease Agreement", "Birth Certificate",
-     "Explanation of Benefits", "Annual Privacy Notice", "Building Permit")
-   - Extract for financial docs only when a specific named title is prominently displayed
-     (e.g., "Automobile Policy Packet", "Summary Plan Description")
-   - Use null for routine invoices, bills, receipts, and standard bank/credit card statements
-     where the business name + document type is already fully descriptive
-   - If the document covers multiple related items (e.g., a bill combining several insurance
-     policies, or a statement spanning several linked accounts), synthesize a short title
-     describing the coverage (e.g., "Auto and Property Insurance Statement") even if that exact
-     phrase isn't printed verbatim — base it on what the document actually lists. If an original
-     filename hint is provided below, use it only as a starting point and verify it against the
-     document's actual content; correct or expand it rather than copying it blindly
-   - Limit to 5 words maximum; use title case
+     (e.g., "Tax Delinquent", "W-2", "Lease", "Birth Certificate", "EOB", "Privacy Notice", "Building Permit")
+   - Extract for financial docs when a specific named title is prominently displayed
+     (e.g., "Auto Policy", "Plan Summary")
+   - Use null for routine invoices, bills, receipts, itineraries, and standard bank/credit card statements
+     where Vendor + document type is already fully descriptive
+   - Do NOT set a title that only restates the document type with a filler word
+     (e.g. null not "Travel Itinerary" when type is "Itinerary"; null not "Invoice Document")
+   - Do NOT repeat words already in the business/vendor name
+   - If the document covers multiple related items, synthesize a short title (e.g., "Auto Property Insurance")
+   - If an original filename hint is provided, use it only as a starting point and verify against the document
+   - Limit to 5 words maximum; use title case; prefer short forms
 8. USDF Dressage test scorecard fields (only for USDF/United States Dressage Federation scorecards):
    - If this document is a USDF dressage test scorecard, set document_type to "Test" and extract:
      * usdf_test_name: Abbreviated test name — ALWAYS omit the word "Level", use title case:
@@ -142,20 +143,35 @@ INVOICE_EXTRACTION_PROMPT = """Extract the following information from this docum
 
 Return the response in this exact JSON format:
 {
-  "business_name": "Company Name Here",
+  "business_name": "Short Vendor Name",
   "document_type": "Type Here",
-  "document_title": "Specific Title Here or null",
+  "document_title": "Short Topic or null",
   "invoice_date": "YYYY-MM-DD",
-  "invoice_number": "Number Here or null",
+  "invoice_number": "Short Id or null",
   "patient_animal_name": "Name Here or null",
   "account_type": "Account Type Here or null",
-  "account_last_4": "Last 4 digits or null",
+  "account_last_4": "Last4 or short id or null",
   "usdf_test_name": "USDF Introductory A or null",
   "usdf_rider_number": "Competitor number or null",
   "usdf_rider_name": "Rider full name or null"
 }
 
 If you cannot find any piece of information, use null for that field."""
+
+# Short-name abbreviations applied after extraction (case-insensitive whole-phrase match)
+FILENAME_ABBREVIATIONS = [
+    (re.compile(r'^American Express$', re.IGNORECASE), 'Amex'),
+    (re.compile(r'^American Express National Bank$', re.IGNORECASE), 'Amex'),
+    (re.compile(r'^Bank of America$', re.IGNORECASE), 'BofA'),
+    (re.compile(r'^JPMorgan Chase(?: Bank)?(?:,? N\.?A\.?)?$', re.IGNORECASE), 'Chase'),
+    (re.compile(r'^J\.?\s*P\.?\s*Morgan Chase(?: Bank)?(?:,? N\.?A\.?)?$', re.IGNORECASE), 'Chase'),
+    (re.compile(r'^Wells Fargo(?: Bank)?$', re.IGNORECASE), 'Wells Fargo'),
+    (re.compile(r'^Citibank(?: N\.?A\.?)?$', re.IGNORECASE), 'Citi'),
+    (re.compile(r'^Credit Card$', re.IGNORECASE), 'CC'),
+    (re.compile(r'^Social Security Administration$', re.IGNORECASE), 'SSA'),
+    (re.compile(r'^Internal Revenue Service$', re.IGNORECASE), 'IRS'),
+]
+MAX_ACCOUNT_ID_LEN = 8  # longer ids look like full account numbers — trim to last 4
 
 # Original filenames that are camera/scanner defaults or bare numbers carry no useful signal
 GENERIC_FILENAME_PATTERNS = [
@@ -407,15 +423,48 @@ def setup_logging():
 
 
 def call_llm_api(prompt, file_path, all_pages=False):
-    """Call llm_client.py script to extract invoice information"""
+    """Call LLM via llm_client in-process (avoids Python/LiteLLM cold start per retry).
+
+    Falls back to subprocess if in-process import fails. llm_client may call sys.exit
+    on hard errors; that is converted to RuntimeError so the renamer can fall back.
+    """
     logger = logging.getLogger(__name__)
     logger.info(f"Calling LLM API for file: {file_path}")
     logger.debug(f"Prompt: {prompt[:200]}...")
 
     try:
-        # Use the same Python that's running this script (already re-exec'd to correct version)
-        python_executable = sys.executable
+        # Import in-process so retries reuse the already-loaded LiteLLM stack and
+        # llm_client's file-content cache (pdftotext / pdftoppm not re-run).
+        from llm_client import call_llm_api as _llm_call
 
+        logger.info("Calling llm_client in-process")
+        try:
+            result = _llm_call(prompt, file_path=file_path, all_pages=all_pages)
+        except SystemExit as e:
+            code = e.code if isinstance(e.code, int) else 1
+            logger.error(f"llm_client exited with code {code}")
+            raise RuntimeError(f"llm_client failed with exit code {code}") from e
+
+        if result is None:
+            return None
+        text = result.strip() if isinstance(result, str) else str(result).strip()
+        logger.debug(f"LLM API response: {text[:500] if text else text}")
+        return text
+    except ImportError as e:
+        logger.warning(f"In-process llm_client import failed ({e}); falling back to subprocess")
+        return _call_llm_api_subprocess(prompt, file_path, all_pages)
+    except RuntimeError:
+        raise
+    except Exception as e:
+        logger.error(f"Error calling LLM API in-process: {e}")
+        raise
+
+
+def _call_llm_api_subprocess(prompt, file_path, all_pages=False):
+    """Subprocess fallback for calling llm_client.py"""
+    logger = logging.getLogger(__name__)
+    try:
+        python_executable = sys.executable
         cmd = [
             python_executable,
             os.path.join(os.path.dirname(__file__), 'llm_client.py'),
@@ -426,11 +475,8 @@ def call_llm_api(prompt, file_path, all_pages=False):
             cmd.append('--all-pages')
 
         logger.info(f"Calling llm_client.py with Python: {python_executable}")
-        logger.debug(f"Full command: {' '.join(cmd[:3])}... --file {file_path}")
-
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
 
-        # Log model information from stderr if present
         if result.stderr:
             for line in result.stderr.split('\n'):
                 if 'Using LLM model:' in line:
@@ -444,15 +490,14 @@ def call_llm_api(prompt, file_path, all_pages=False):
         logger.error(f"Error calling LLM API: {e}")
         if e.stderr:
             logger.error(f"Error details: {e.stderr}")
-            # Check for specific error types and provide helpful messages
             if "SSL: CERTIFICATE_VERIFY_FAILED" in e.stderr:
                 logger.warning("SSL certificate verification failed")
             elif "exceeds our limit" in e.stderr and "bytes" in e.stderr:
                 logger.warning("Image file too large for processing")
-        raise  # Re-raise to let caller handle
+        raise
     except FileNotFoundError:
         logger.error("llm_client.py script not found in the same directory")
-        raise  # Re-raise to let caller handle
+        raise
 
 
 def _create_fallback_info():
@@ -478,7 +523,7 @@ def _call_llm_for_invoice_info(file_path, all_pages=False, filename_hint=None):
         prompt = _build_extraction_prompt(filename_hint)
         response = call_llm_api(prompt, file_path, all_pages=all_pages)
         return response
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+    except (subprocess.CalledProcessError, FileNotFoundError, RuntimeError, Exception) as e:
         logger.error(f"Failed to call LLM API: {e}")
         # Log detailed environment info for debugging
         logger.error("UNKNOWN_DOCUMENT_FALLBACK: LLM API call failed")
@@ -666,6 +711,16 @@ def extract_invoice_info(file_path, all_pages=False, filename_hint=None):
     return parsed_info
 
 
+def _apply_filename_abbreviations(text):
+    """Apply known short-name abbreviations for concise filenames."""
+    if not text:
+        return text
+    for pattern, short in FILENAME_ABBREVIATIONS:
+        if pattern.match(text):
+            return short
+    return text
+
+
 def clean_filename(text, limit_words=None):
     """Clean text to be safe for filename use and apply proper capitalization"""
     if not text:
@@ -701,11 +756,60 @@ def clean_filename(text, limit_words=None):
     if len(cleaned) > 50:
         cleaned = cleaned[:50].rstrip()
 
-    # Shorten common terms for concise filenames
-    if cleaned == "Credit Card":
-        cleaned = "CC"
+    # Shorten known verbose vendor/terms for concise filenames
+    cleaned = _apply_filename_abbreviations(cleaned)
 
     return cleaned if cleaned else "Unknown"
+
+
+def _normalize_account_id(value):
+    """Normalize account identifier for filenames: short, low-PII, alphanumeric OK.
+
+    - If 4+ digits present (e.g. xxxx1234, xx-1234, full numbers): keep last 4 digits only
+    - Else short alphanumeric refs (e.g. A12B): keep as-is up to MAX_ACCOUNT_ID_LEN
+    - Too short or empty: None
+    """
+    if not value or value == "null":
+        return None
+    raw = str(value).strip()
+    digits = re.sub(r'[^\d]', '', raw)
+    alnum = re.sub(r'[^A-Za-z0-9]', '', raw)
+    if not alnum:
+        return None
+    # Prefer last 4 digits when enough digits exist (masks / full account numbers)
+    if len(digits) >= 4:
+        return digits[-4:]
+    # Pure digit strings shorter than 4 are not useful as last-4 identifiers
+    if alnum.isdigit():
+        return None
+    # Short alphanumeric account refs without a 4-digit suffix
+    if len(alnum) > MAX_ACCOUNT_ID_LEN:
+        return alnum[-4:]
+    if len(alnum) < 2:
+        return None
+    return alnum
+
+
+def _normalize_invoice_number(value):
+    """Normalize invoice/doc reference: short alphanumeric OK; long digit strings → last 4."""
+    if not value or value == "null":
+        return None
+    # Allow hyphen in middle of id then strip for safety — keep alnum only for FS
+    cleaned = re.sub(r'[^A-Za-z0-9]', '', str(value))
+    if not cleaned:
+        return None
+    if cleaned.isdigit():
+        if len(cleaned) < 2:
+            return None
+        # Long pure-digit refs look like account numbers — last 4 only
+        if len(cleaned) > MAX_ACCOUNT_ID_LEN:
+            return cleaned[-4:]
+        return cleaned
+    if len(cleaned) > MAX_ACCOUNT_ID_LEN:
+        return cleaned[:MAX_ACCOUNT_ID_LEN]
+    if len(cleaned) < 2:
+        return None
+    return cleaned
 
 
 def format_date(date_str):
@@ -779,18 +883,10 @@ def _clean_and_validate_fields(info):
     document_title = clean_filename(info.get('document_title'), limit_words=5) if info.get('document_title') else None
     invoice_date = format_date(info.get('invoice_date'))
 
-    # Process invoice number
-    invoice_number = info.get('invoice_number')
+    # Process invoice number (short alphanumeric OK; long digit strings trimmed)
+    invoice_number = _normalize_invoice_number(info.get('invoice_number'))
     if invoice_number:
-        # If invoice_number looks like an account number (long digits), take last 4 digits
-        invoice_number_cleaned = re.sub(r'[^\d]', '', invoice_number)  # Keep only digits
-        if len(invoice_number_cleaned) >= 4:
-            invoice_number = invoice_number_cleaned[-4:]  # Take last 4 digits
-        else:
-            invoice_number = invoice_number_cleaned
-        invoice_number = clean_filename(invoice_number) if invoice_number else None
-    else:
-        invoice_number = None
+        invoice_number = clean_filename(invoice_number)
 
     # Process patient/animal name
     patient_animal_name = clean_filename(info.get('patient_animal_name')) if info.get('patient_animal_name') else None
@@ -798,21 +894,13 @@ def _clean_and_validate_fields(info):
     # Process account type
     account_type = clean_filename(info.get('account_type')) if info.get('account_type') else None
 
-    # Process account last 4
-    account_last_4 = info.get('account_last_4')
+    # Process account identifier (last 4 digits or short alphanumeric — low PII)
+    account_last_4 = _normalize_account_id(info.get('account_last_4'))
     if account_last_4:
-        # Ensure only the last 4 digits are used and verify it's exactly 4 digits
-        account_last_4_cleaned = re.sub(r'[^\d]', '', account_last_4)  # Keep only digits
-        if len(account_last_4_cleaned) == 4:
-            account_last_4 = account_last_4_cleaned  # Use as-is if exactly 4 digits
-        elif len(account_last_4_cleaned) > 4:
-            account_last_4 = account_last_4_cleaned[-4:]  # Take last 4 digits if longer
-        else:
-            # Too short, not a valid account number
-            account_last_4 = None
-            # If we don't have valid last 4, clear account type too since it's incomplete
-            account_type = None
-        account_last_4 = clean_filename(account_last_4) if account_last_4 else None
+        account_last_4 = clean_filename(account_last_4)
+    elif info.get('account_last_4'):
+        # Had a value but it was invalid/too short — drop incomplete account pair
+        account_type = None
     else:
         account_last_4 = None
 
@@ -835,8 +923,69 @@ def _clean_and_validate_fields(info):
     }
 
 
+# Filler words that don't add meaning if they are all that remains of a title
+_GENERIC_TITLE_WORDS = frozenset({
+    'travel', 'document', 'documents', 'general', 'official', 'the', 'a', 'an',
+    'and', 'of', 'for', 'to', 'in', 'at', 'by', 'with', 'from', 'on',
+})
+
+
+def _select_display_topic(business_name, document_type, document_title):
+    """Choose a concise topic that does not repeat vendor or document type.
+
+    Examples:
+      ("Alaska Cruise", "Itinerary", "Travel Itinerary") → "Itinerary"
+      ("Acme Insurance", "Policy", "Automobile Policy Packet") → "Automobile Policy Packet"
+      ("IRS", "Notice", "Tax Delinquent Notice") → "Tax Delinquent"
+    """
+    dtype = document_type or 'Document'
+    if not document_title:
+        return dtype
+
+    title = document_title.strip()
+    if not title:
+        return dtype
+
+    title_l = title.lower()
+    dtype_l = dtype.lower()
+    if title_l == dtype_l:
+        return dtype
+
+    title_words = title.split()
+    type_words = dtype.split()
+
+    # Drop type phrase when it is a whole-word suffix ("Travel Itinerary" + Itinerary → "Travel")
+    # Do not strip type words from the middle (keep "Automobile Policy Packet" intact)
+    if type_words and len(title_words) >= len(type_words):
+        suffix = [w.lower() for w in title_words[-len(type_words):]]
+        if suffix == [w.lower() for w in type_words]:
+            title_words = title_words[:-len(type_words)]
+
+    # Drop words already present in the vendor/business name
+    vendor_words = {w.lower() for w in (business_name or '').split() if w}
+    if vendor_words:
+        title_words = [w for w in title_words if w.lower() not in vendor_words]
+
+    remaining = ' '.join(title_words).strip()
+    if not remaining:
+        return dtype
+
+    # Leftover that is only filler ("Travel") is not worth including
+    if all(w.lower() in _GENERIC_TITLE_WORDS for w in remaining.split()):
+        return dtype
+
+    if remaining.lower() == dtype_l:
+        return dtype
+
+    return remaining
+
+
 def _build_filename_parts(fields, file_ext):
     """Build filename parts from cleaned fields"""
+    # Always use lowercase extensions (.pdf, .jpg, etc.)
+    file_ext = (file_ext or '').lower()
+    if file_ext and not file_ext.startswith('.'):
+        file_ext = f'.{file_ext}'
     business_name = fields['business_name']
     document_type = fields['document_type']
     document_title = fields.get('document_title')
@@ -862,8 +1011,8 @@ def _build_filename_parts(fields, file_ext):
             new_filename = f"{usdf_test_name}{date_part}{file_ext}"
         return new_filename, invoice_date
 
-    # Use specific document title when available, otherwise fall back to generic type
-    display_type = document_title if document_title else document_type
+    # Topic without repeating vendor or type (e.g. not "Alaska Cruise Travel Itinerary")
+    display_type = _select_display_topic(business_name, document_type, document_title)
 
     # Format: Business Name [Account-Type] Display-Type [Last4] [- Patient/Animal] [Invoice#] Date
     # For bank-related/credit card documents, insert account type before document type
@@ -883,12 +1032,10 @@ def _build_filename_parts(fields, file_ext):
     if patient_animal_name:
         filename_parts.append(f"- {patient_animal_name}")
 
-    # Only include invoice number if we don't have account information and it's exactly 4 digits
-    # (statements typically use account numbers instead of invoice numbers)
+    # Include short invoice/doc id when we don't already have account info
+    # (statements typically use account identifier instead of invoice numbers)
     if invoice_number and not account_type:
-        # Only include if it's exactly 4 digits (to avoid random numbers being misidentified as account numbers)
-        if len(re.sub(r'[^\d]', '', invoice_number)) == 4:
-            filename_parts.append(invoice_number)
+        filename_parts.append(invoice_number)
 
     # Only include date if it's valid (not 00000000)
     if invoice_date and invoice_date != "00000000":
@@ -1051,6 +1198,13 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     logger.info(f"Python version: {sys.version}")
     logger.info(f"Command line args: {sys.argv}")
 
+    # Fresh content cache per rename (retries within this call still share the cache)
+    try:
+        from llm_client import clear_file_content_cache
+        clear_file_content_cache()
+    except ImportError:
+        pass
+
     # Validate file exists
     if not os.path.exists(file_path):
         logger.error(f"File not found: {file_path}")
@@ -1116,9 +1270,9 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     if fields.get('usdf_rider_name'):
         logger.info(f"Extracted USDF rider name: {fields['usdf_rider_name']}")
 
-    # Output is always .pdf for converted files; otherwise preserve original extension
+    # Output is always .pdf for converted files; otherwise preserve original extension (lowercase)
     file_dir = os.path.dirname(file_path)
-    output_ext = '.pdf' if needs_conversion else os.path.splitext(file_path)[1]
+    output_ext = '.pdf' if needs_conversion else os.path.splitext(file_path)[1].lower()
 
     # Build filename
     new_filename, invoice_date = _build_filename_parts(fields, output_ext)
@@ -1189,7 +1343,8 @@ def main():
     parser.add_argument("file", help="Invoice file to rename")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be done without actually renaming")
     parser.add_argument("--move-to", help="Target directory to move the renamed file to")
-    parser.add_argument("--all-pages", action="store_true", help="Process all pages of PDF (default: first page only)")
+    parser.add_argument("--all-pages", action="store_true",
+                        help="Process all pages of PDF (default: first 2 pages — cover + content)")
 
     try:
         args = parser.parse_args()

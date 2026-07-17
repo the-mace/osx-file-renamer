@@ -42,7 +42,7 @@ class TestCallLLMApi:
         mock_completion.assert_called_once()
         call_kwargs = mock_completion.call_args.kwargs
 
-        assert call_kwargs["model"] == "xai/grok-4.3"
+        assert call_kwargs["model"] == "xai/grok-4.20-0309-non-reasoning"
         assert call_kwargs['messages'] == [{"role": "user", "content": "Test prompt"}]
         assert call_kwargs['stream'] is False
 
@@ -112,7 +112,7 @@ class TestCallLLMApi:
             "type": "image_url",
             "image_url": {
                 "url": "data:image/jpeg;base64,test",
-                "detail": "high"
+                "detail": "low"
             }
         }
 
@@ -123,9 +123,9 @@ class TestCallLLMApi:
 
         assert result == "Image analyzed"
 
-        # Verify vision model was used (latest alias)
+        # Verify vision model was used (fast non-reasoning default)
         call_kwargs = mock_completion.call_args.kwargs
-        assert call_kwargs["model"] == "xai/grok-4.3"
+        assert call_kwargs["model"] == "xai/grok-4.20-0309-non-reasoning"
 
     @patch('llm_client.read_file_content')
     @patch('llm_client.os.getenv')
@@ -146,11 +146,11 @@ class TestCallLLMApi:
             "images": [
                 {
                     "type": "image_url",
-                    "image_url": {"url": "data:image/jpeg;base64,image1", "detail": "high"}
+                    "image_url": {"url": "data:image/jpeg;base64,image1", "detail": "low"}
                 },
                 {
                     "type": "image_url",
-                    "image_url": {"url": "data:image/jpeg;base64,image2", "detail": "high"}
+                    "image_url": {"url": "data:image/jpeg;base64,image2", "detail": "low"}
                 }
             ]
         }
@@ -162,9 +162,9 @@ class TestCallLLMApi:
 
         assert result == "Multi-page analyzed"
 
-        # Verify vision model was used and multiple images were passed (latest alias)
+        # Verify vision model was used and multiple images were passed (fast non-reasoning default)
         call_kwargs = mock_completion.call_args.kwargs
-        assert call_kwargs["model"] == "xai/grok-4.3"
+        assert call_kwargs["model"] == "xai/grok-4.20-0309-non-reasoning"
         messages = call_kwargs['messages']
         assert len(messages) == 1
         # Content should be a list with text and multiple images

@@ -29,7 +29,7 @@ class TestProcessImageFile:
         assert "image_url" in result
         assert "url" in result["image_url"]
         assert result["image_url"]["url"].startswith("data:image/jpeg;base64,")
-        assert result["image_url"]["detail"] == "high"
+        assert result["image_url"]["detail"] == "low"
 
         # Verify base64 encoding
         base64_part = result["image_url"]["url"].split(",")[1]
@@ -338,7 +338,7 @@ class TestReadFileContent:
 
                 # Should return the image when conversion succeeds
                 assert result["type"] == "image_url"
-                mock_convert.assert_called_once_with(str(pdf_file), max_pages=1)
+                mock_convert.assert_called_once_with(str(pdf_file), max_pages=2)
 
     def test_read_file_content_image_file(self, tmp_path, sample_jpeg_data):
         """Test processing image files."""
@@ -398,11 +398,12 @@ class TestExtractEmbeddedImages:
         assert result["type"] == "image_url"
         mock_process.assert_called_once_with(extracted_file, "image/jpg")
 
-        # Verify pdfimages was called with first page only flags
+        # Verify pdfimages was called with default pages 1-2 flags
         call_args = mock_run.call_args[0][0]
         assert '-f' in call_args
         assert '-l' in call_args
-        assert '1' in call_args
+        assert call_args[call_args.index('-f') + 1] == '1'
+        assert call_args[call_args.index('-l') + 1] == '2'
 
     @patch('subprocess.run')
     @patch('os.path.exists')
@@ -546,7 +547,7 @@ class TestConvertPdfToImages:
         mock_run.return_value = MagicMock(returncode=0)
 
         # Create mock generated image
-        temp_image = str(tmp_path / "temp-1.png")
+        temp_image = str(tmp_path / "temp-1.jpg")
         with open(temp_image, 'wb') as f:
             f.write(sample_jpeg_data)
 
@@ -557,7 +558,7 @@ class TestConvertPdfToImages:
 
         with patch('tempfile.NamedTemporaryFile') as mock_tempfile:
             mock_temp = MagicMock()
-            mock_temp.name = str(tmp_path / "temp.png")
+            mock_temp.name = str(tmp_path / "temp.jpg")
             mock_tempfile.return_value.__enter__.return_value = mock_temp
 
             with patch('builtins.open', create=True) as mock_open:
@@ -569,10 +570,11 @@ class TestConvertPdfToImages:
 
         assert result["type"] == "image_url"
         assert "image_url" in result
+        assert result["image_url"]["detail"] == "low"
 
         # Verify pdftoppm was called with correct arguments
         call_args = mock_run.call_args[0][0]
-        assert '-png' in call_args
+        assert '-jpeg' in call_args
         assert '-r' in call_args
         assert '100' in call_args  # DPI
         assert '-l' in call_args
@@ -587,7 +589,7 @@ class TestConvertPdfToImages:
         mock_run.return_value = MagicMock(returncode=0)
 
         # Create mock generated images for 3 pages
-        temp_images = [str(tmp_path / f"temp-{i}.png") for i in range(1, 4)]
+        temp_images = [str(tmp_path / f"temp-{i}.jpg") for i in range(1, 4)]
         for img_path in temp_images:
             with open(img_path, 'wb') as f:
                 f.write(sample_jpeg_data)
@@ -599,7 +601,7 @@ class TestConvertPdfToImages:
 
         with patch('tempfile.NamedTemporaryFile') as mock_tempfile:
             mock_temp = MagicMock()
-            mock_temp.name = str(tmp_path / "temp.png")
+            mock_temp.name = str(tmp_path / "temp.jpg")
             mock_tempfile.return_value.__enter__.return_value = mock_temp
 
             with patch('builtins.open', create=True) as mock_open:
@@ -622,7 +624,7 @@ class TestConvertPdfToImages:
 
         with patch('tempfile.NamedTemporaryFile') as mock_tempfile:
             mock_temp = MagicMock()
-            mock_temp.name = "/tmp/temp.png"
+            mock_temp.name = "/tmp/temp.jpg"
             mock_tempfile.return_value.__enter__.return_value = mock_temp
 
             # This raises Exception which then gets caught and turned into SystemExit
@@ -670,7 +672,7 @@ class TestConvertPdfToImages:
 
         with patch('tempfile.NamedTemporaryFile') as mock_tempfile:
             mock_temp = MagicMock()
-            mock_temp.name = str(tmp_path / "temp.png")
+            mock_temp.name = str(tmp_path / "temp.jpg")
             mock_tempfile.return_value.__enter__.return_value = mock_temp
 
             # This raises Exception which then gets caught and turned into SystemExit
@@ -680,29 +682,22 @@ class TestConvertPdfToImages:
     @patch('subprocess.run')
     @patch('os.path.exists')
     @patch('os.unlink')
-    def test_convert_pdf_to_images_compression_with_pngquant(self, mock_unlink, mock_exists, mock_run, tmp_path, sample_jpeg_data):
-        """Test image compression using pngquant for large images."""
+    @patch('llm_client.compress_image')
+    def test_convert_pdf_to_images_compression_for_large_images(self, mock_compress, mock_unlink, mock_exists, mock_run, tmp_path, sample_jpeg_data):
+        """Test image compression for large JPEG page renders."""
         # Make data large enough to trigger compression
         large_data = sample_jpeg_data * (MAX_RAW_SIZE // len(sample_jpeg_data) + 100)
+        mock_compress.return_value = sample_jpeg_data
 
         def run_side_effect(*args, **kwargs):
-            cmd = args[0][0] if args else ""
-            if 'pdftoppm' in str(cmd):
-                return MagicMock(returncode=0)
-            elif 'pngquant' in str(cmd):
-                # Simulate pngquant success
-                return MagicMock(returncode=0)
-            return MagicMock(returncode=1)
+            return MagicMock(returncode=0)
 
         mock_run.side_effect = run_side_effect
 
-        temp_image = str(tmp_path / "temp-1.png")
-        compressed_image = str(tmp_path / "temp-1_compressed.png")
+        temp_image = str(tmp_path / "temp-1.jpg")
 
         def exists_side_effect(path):
             if path == temp_image:
-                return True
-            if path == compressed_image:
                 return True
             return '/bin/pdftoppm' in path
 
@@ -710,24 +705,16 @@ class TestConvertPdfToImages:
 
         with patch('tempfile.NamedTemporaryFile') as mock_tempfile:
             mock_temp = MagicMock()
-            mock_temp.name = str(tmp_path / "temp.png")
+            mock_temp.name = str(tmp_path / "temp.jpg")
             mock_tempfile.return_value.__enter__.return_value = mock_temp
 
             with patch('builtins.open', create=True) as mock_open:
-                call_count = [0]
-
-                def read_side_effect():
-                    call_count[0] += 1
-                    # First call returns large data, second call returns compressed
-                    if call_count[0] == 1:
-                        return large_data
-                    return sample_jpeg_data
-
                 mock_file = MagicMock()
-                mock_file.read.side_effect = read_side_effect
+                mock_file.read.return_value = large_data
                 mock_open.return_value.__enter__.return_value = mock_file
 
                 result = convert_pdf_to_images("test.pdf", max_pages=1)
 
         # Should succeed with compression
         assert result is not None
+        mock_compress.assert_called_once()

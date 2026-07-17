@@ -218,7 +218,8 @@ Business Name [Account-Type] Document-Type [Last4] [- Patient/Animal] [Invoice#]
 
 Examples:
 
-- `Chase Credit Card Statement 20240115.pdf`
+- `Amex CC Statement 1000 20240115.pdf`
+- `Chase Checking Statement 4521 20240115.pdf`
 - `Wells Fargo Checking Statement 4567 20240101.pdf`
 - `Tesla Portfolio Statement 20231231.pdf`
 - `Dr Smith Invoice ACS-1234 20240115.pdf`
@@ -248,11 +249,21 @@ The tool accepts these optional parameters:
 |-----------|-------------|---------|
 | `--dry-run` | Preview changes without modifying files | False |
 | `--move-to` | Target directory for renamed files | Current directory |
-| `--all-pages` | Process all PDF pages (vs. first page only) | False |
+| `--all-pages` | Process all PDF pages (default: first 2 pages — cover + content) | False |
 
 ## Logging
 
 Logs are automatically written to a platform-specific temporary directory (typically `/tmp` on Unix-like systems or system temp directory on Windows) with automatic rotation to keep file size manageable. Log levels include DEBUG, INFO, WARNING, and ERROR.
+
+## Performance notes
+
+Default path is optimized for short names and moderate latency:
+
+- Text PDFs use `pdftotext` (pages 1–2); scans use vision on JPEG page renders
+- LLM client runs in-process with content caching for retries
+- Fast non-reasoning model by default; override with `LLM_MODEL` if needed
+
+If you need it **faster or cheaper** later (e.g. local Tesseract for clean scans, path timing logs, cheaper vision models), see **Future Optimizations** in [`CLAUDE.md`](CLAUDE.md).
 
 ## Troubleshooting
 
