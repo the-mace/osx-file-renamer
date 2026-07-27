@@ -36,9 +36,8 @@ class TestPDFTextExtraction:
         result = read_file_content(pdf_path)
 
         # Note: Our test PDF created by ImageMagick is actually image-based,
-        # so it will be extracted as an image, not text. This is realistic -
-        # many PDFs are scanned and require image processing.
-        assert result["type"] in ["text", "image_url"]
+        # so it will be extracted as an image (possibly multi-page), not text.
+        assert result["type"] in ["text", "image_url", "multi_image"]
 
         # If it's text, verify content exists
         if result["type"] == "text":
@@ -127,10 +126,10 @@ class TestPDFConversion:
         # Convert first page only
         result = convert_pdf_to_images(pdf_path, max_pages=1)
 
-        # Should return single image
+        # Should return single image (JPEG for smaller/faster vision payloads)
         assert result["type"] == "image_url"
         assert "image_url" in result
-        assert result["image_url"]["url"].startswith("data:image/png;base64,")
+        assert result["image_url"]["url"].startswith("data:image/jpeg;base64,")
 
     def test_convert_scanned_pdf_to_image(self):
         """Test converting a scanned PDF to image format."""
@@ -159,9 +158,12 @@ class TestFullPipeline:
         test_files = [
             ('test_image.jpg', 'image_url'),
             ('test_image.png', 'image_url'),
-            ('test_text.pdf', ['text', 'image_url']),  # Could be either depending on PDF type
+            ('test_text.pdf', ['text', 'image_url', 'multi_image']),  # ImageMagick PDFs often image-based
             ('test_content.txt', 'text'),  # Plain text
         ]
+
+        from llm_client import clear_file_content_cache
+        clear_file_content_cache()
 
         for filename, expected_types in test_files:
             file_path = os.path.join(FIXTURES_DIR, filename)

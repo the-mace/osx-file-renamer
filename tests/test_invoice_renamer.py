@@ -3,6 +3,7 @@ import os
 import sys
 import subprocess
 import re
+from datetime import datetime
 from unittest.mock import patch, MagicMock, mock_open
 import json
 
@@ -14,6 +15,8 @@ from invoice_renamer import (
     clean_filename, format_date, rename_invoice, main,
     convert_to_pdf, _find_soffice_cmd,
     CONVERTIBLE_IMAGE_EXTENSIONS, CONVERTIBLE_DOC_EXTENSIONS,
+    _build_filename_parts, _clean_and_validate_fields, _sanitize_document_fields,
+    _find_pdftoppm, _extract_usdf_page2_rotated, USDF_PAGE2_PROMPT,
 )
 
 
@@ -54,48 +57,44 @@ class TestSetupLogging:
 
 class TestCallLLMApi:
 
-    @patch('invoice_renamer.subprocess.run')
-    def test_call_llm_api_success(self, mock_run):
-        """Test call_llm_api successful execution."""
-        mock_run.return_value = MagicMock(returncode=0, stdout="API Response")
+    @patch('llm_client.call_llm_api')
+    def test_call_llm_api_success(self, mock_llm):
+        """Test call_llm_api successful in-process execution."""
+        mock_llm.return_value = "API Response"
 
         result = call_llm_api("test prompt", "/path/to/file.pdf")
 
         assert result == "API Response"
-        mock_run.assert_called_once()
-        args, kwargs = mock_run.call_args
-        # Should use sys.executable (already re-exec'd to correct version)
-        assert args[0][0] == sys.executable
-        assert 'llm_client.py' in args[0][1]
-        assert args[0][2] == "test prompt"
-        assert args[0][3] == '--file'
-        assert args[0][4] == "/path/to/file.pdf"
+        mock_llm.assert_called_once()
+        kwargs = mock_llm.call_args.kwargs
+        assert kwargs.get('file_path') == "/path/to/file.pdf"
+        assert kwargs.get('all_pages') is False
+        assert mock_llm.call_args.args[0] == "test prompt"
 
-    @patch('invoice_renamer.subprocess.run')
-    def test_call_llm_api_with_all_pages(self, mock_run):
+    @patch('llm_client.call_llm_api')
+    def test_call_llm_api_with_all_pages(self, mock_llm):
         """Test call_llm_api with all_pages flag."""
-        mock_run.return_value = MagicMock(returncode=0, stdout="Full API Response")
+        mock_llm.return_value = "Full API Response"
 
         result = call_llm_api("test prompt", "/path/to/file.pdf", all_pages=True)
 
         assert result == "Full API Response"
-        args, kwargs = mock_run.call_args
-        assert '--all-pages' in args[0]
+        assert mock_llm.call_args.kwargs.get('all_pages') is True
 
-    @patch('invoice_renamer.subprocess.run')
-    def test_call_llm_api_file_not_found(self, mock_run):
-        """Test call_llm_api when llm_client.py script not found."""
-        mock_run.side_effect = FileNotFoundError("python3 not found")
+    @patch('llm_client.call_llm_api')
+    def test_call_llm_api_system_exit_raises_runtime_error(self, mock_llm):
+        """Test call_llm_api converts SystemExit from llm_client to RuntimeError."""
+        mock_llm.side_effect = SystemExit(1)
 
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(RuntimeError):
             call_llm_api("test prompt", "/path/to/file.pdf")
 
-    @patch('invoice_renamer.subprocess.run')
-    def test_call_llm_api_subprocess_error(self, mock_run):
-        """Test call_llm_api subprocess execution error."""
-        mock_run.side_effect = subprocess.CalledProcessError(1, 'cmd', stderr="SSL error")
+    @patch('llm_client.call_llm_api')
+    def test_call_llm_api_propagates_errors(self, mock_llm):
+        """Test call_llm_api propagates unexpected errors."""
+        mock_llm.side_effect = RuntimeError("SSL error")
 
-        with pytest.raises(subprocess.CalledProcessError):
+        with pytest.raises(RuntimeError):
             call_llm_api("test prompt", "/path/to/file.pdf")
 
 
@@ -202,6 +201,13 @@ class TestCleanFilename:
     def test_clean_filename_credit_card_abbrev(self):
         """Test clean_filename abbreviates common terms."""
         assert clean_filename("Credit Card") == "CC"
+
+    def test_clean_filename_vendor_abbreviations(self):
+        """Test clean_filename shortens common vendor names."""
+        assert clean_filename("American Express") == "Amex"
+        assert clean_filename("Bank of America") == "BofA"
+        assert clean_filename("JPMorgan Chase") == "Chase"
+        assert clean_filename("Citibank") == "Citi"
 
 
 class TestFormatDate:
@@ -521,6 +527,77 @@ class TestRenameInvoiceConversion:
         # The new filename should end in .pdf
         assert ".pdf" in captured.out
 
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_output_extension_always_lowercase(self, mock_extract, tmp_path, capsys):
+        """Renamed files always use lowercase extensions (.pdf not .PDF)."""
+        src = tmp_path / "doc.PDF"
+        src.write_bytes(b"%PDF")
+
+        mock_extract.return_value = {
+            'business_name': 'Test Company',
+            'document_type': 'Invoice',
+            'document_title': None,
+            'invoice_date': '2024-01-15',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+        }
+
+        result = rename_invoice(str(src), dry_run=True)
+
+        assert result is True
+        captured = capsys.readouterr()
+        # Dry-run may mention the original "doc.PDF"; the target name must be lowercase
+        assert "to Test Invoice 20240115.pdf" in captured.out
+        assert "to Test Invoice 20240115.PDF" not in captured.out
+
+    def test_build_filename_parts_lowercases_extension(self):
+        """_build_filename_parts normalizes extensions to lowercase."""
+        from invoice_renamer import _build_filename_parts
+        fields = {
+            'business_name': 'Acme',
+            'document_type': 'Invoice',
+            'document_title': None,
+            'invoice_date': '20240115',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        filename, _ = _build_filename_parts(fields, '.PDF')
+        assert filename.endswith('.pdf')
+        assert not filename.endswith('.PDF')
+
+    def test_select_display_topic_drops_redundant_title(self):
+        """Redundant titles like 'Travel Itinerary' collapse to document type."""
+        from invoice_renamer import _select_display_topic, _build_filename_parts
+
+        assert _select_display_topic('Alaska Cruise', 'Itinerary', 'Travel Itinerary') == 'Itinerary'
+        assert _select_display_topic('Alaska Cruise', 'Itinerary', 'Alaska Cruise Itinerary') == 'Itinerary'
+        assert _select_display_topic('IRS', 'Notice', 'Tax Delinquent Notice') == 'Tax Delinquent'
+        assert _select_display_topic('Acme Insurance', 'Notice', 'Automobile Policy Packet') == 'Automobile Policy Packet'
+        assert _select_display_topic('Bank', 'Statement', None) == 'Statement'
+
+        fields = {
+            'business_name': 'Alaska Cruise',
+            'document_type': 'Itinerary',
+            'document_title': 'Travel Itinerary',
+            'invoice_date': '20260718',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == 'Alaska Cruise Itinerary 20260718.pdf'
+
 
 class TestMain:
 
@@ -616,3 +693,393 @@ class TestMain:
                 main()
 
             assert excinfo.value.code == 1
+
+
+class TestUsdfDressageTest:
+    """Tests for USDF dressage test scorecard naming support."""
+
+    def _make_usdf_info(self, test_name="USDF Introductory A", rider_number="99",
+                        rider_name="Alex Rider", date="2026-06-13"):
+        return {
+            'business_name': 'USDF',
+            'document_type': 'Test',
+            'document_title': None,
+            'invoice_date': date,
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+            'usdf_test_name': test_name,
+            'usdf_rider_number': rider_number,
+            'usdf_rider_name': rider_name,
+        }
+
+    def test_usdf_filename_full(self):
+        """USDF scorecard with all fields produces correct filename."""
+        info = self._make_usdf_info()
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == "USDF Introductory A - 99 - Alex Rider 20260613.pdf"
+
+    def test_usdf_filename_no_rider_number(self):
+        """USDF scorecard without a rider number omits the number segment."""
+        info = self._make_usdf_info(rider_number=None)
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == "USDF Introductory A - Alex Rider 20260613.pdf"
+
+    def test_usdf_filename_test_name_only(self):
+        """USDF scorecard where LLM only extracted test name uses test name alone."""
+        info = self._make_usdf_info(rider_number=None, rider_name=None)
+        info['usdf_rider_name'] = None
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == "USDF Introductory A 20260613.pdf"
+
+    def test_usdf_filename_number_without_name(self):
+        """USDF scorecard with rider number but no name includes the number."""
+        info = self._make_usdf_info(rider_number="28", rider_name=None)
+        info['usdf_rider_name'] = None
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == "USDF Introductory A - 28 20260613.pdf"
+
+    def test_usdf_filename_training_level(self):
+        """USDF Training Level test produces correct filename."""
+        info = self._make_usdf_info(test_name="USDF Training 1", rider_number="42",
+                                    rider_name="Jane Smith", date="2026-06-14")
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == "USDF Training 1 - 42 - Jane Smith 20260614.pdf"
+
+    def test_usdf_filename_first_level(self):
+        """USDF First Level test produces correct filename (no 'Level' word)."""
+        info = self._make_usdf_info(test_name="USDF First 2", rider_number="7",
+                                    rider_name="John Doe", date="2026-06-15")
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == "USDF First 2 - 7 - John Doe 20260615.pdf"
+
+    def test_usdf_no_date_omits_date(self):
+        """USDF scorecard with no date omits date from filename."""
+        info = self._make_usdf_info(date=None)
+        info['invoice_date'] = None
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        # Patch date fallback by setting invoice_date to 00000000 directly
+        fields['invoice_date'] = '00000000'
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == "USDF Introductory A - 99 - Alex Rider.pdf"
+
+    def test_usdf_fields_in_clean_and_validate(self):
+        """_clean_and_validate_fields passes USDF fields through correctly."""
+        info = self._make_usdf_info()
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        assert fields['usdf_test_name'] == "USDF Introductory A"
+        assert fields['usdf_rider_number'] == "99"
+        assert fields['usdf_rider_name'] == "Alex Rider"
+
+    def test_non_usdf_document_has_no_usdf_fields(self):
+        """Non-USDF document produces no usdf_* fields in filename."""
+        info = {
+            'business_name': 'Chase',
+            'document_type': 'Statement',
+            'document_title': None,
+            'invoice_date': '2024-01-15',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'Checking',
+            'account_last_4': '1234',
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        # Should use standard invoice format, not USDF format
+        assert "Chase" in filename
+        assert " - " not in filename or "Checking" in filename
+
+    @patch('invoice_renamer.call_llm_api')
+    def test_extract_invoice_info_usdf(self, mock_call_api):
+        """extract_invoice_info correctly parses USDF LLM response."""
+        mock_response = {
+            "business_name": "USDF",
+            "document_type": "Test",
+            "document_title": None,
+            "invoice_date": "2026-06-13",
+            "invoice_number": None,
+            "patient_animal_name": None,
+            "account_type": None,
+            "account_last_4": None,
+            "usdf_test_name": "USDF Introductory A",
+            "usdf_rider_number": "99",
+            "usdf_rider_name": "Alex Rider",
+        }
+        mock_call_api.return_value = json.dumps(mock_response)
+
+        result = extract_invoice_info("/path/to/usdf_test.pdf")
+
+        assert result['usdf_test_name'] == "USDF Introductory A"
+        assert result['usdf_rider_number'] == "99"
+        assert result['usdf_rider_name'] == "Alex Rider"
+        assert result['invoice_date'] == "2026-06-13"
+
+    @patch('invoice_renamer._extract_usdf_page2_rotated')
+    @patch('invoice_renamer.call_llm_api')
+    def test_extract_invoice_info_usdf_retry_merges_results(self, mock_call_api, mock_extract_p2):
+        """Page 2 OCR merges with page 1 — fields found on page 1 are not discarded."""
+        first_response = {
+            "business_name": "USDF", "document_type": "Test", "document_title": None,
+            "invoice_date": None, "invoice_number": None, "patient_animal_name": None,
+            "account_type": None, "account_last_4": None,
+            "usdf_test_name": "USDF First 1",
+            "usdf_rider_number": "28",   # found on page 1
+            "usdf_rider_name": None,
+        }
+        retry_response = {
+            "business_name": "USDF", "document_type": "Test", "document_title": None,
+            "invoice_date": "2026-06-13", "invoice_number": None, "patient_animal_name": None,
+            "account_type": None, "account_last_4": None,
+            "usdf_test_name": "USDF First 1",
+            "usdf_rider_number": None,   # page 2 missed it — should keep value from page 1
+            "usdf_rider_name": "Maya Smith",
+        }
+        mock_extract_p2.return_value = '/tmp/fake_usdf_rotated.jpg'
+        mock_call_api.side_effect = [json.dumps(first_response), json.dumps(retry_response)]
+
+        result = extract_invoice_info("/path/to/usdf_test.pdf")
+
+        assert result['usdf_rider_number'] == "28"      # preserved from page 1
+        assert result['usdf_rider_name'] == "Maya Smith"  # from page 2
+        assert result['invoice_date'] == "2026-06-13"
+
+    @patch('invoice_renamer._extract_usdf_page2_rotated')
+    @patch('invoice_renamer.call_llm_api')
+    def test_extract_invoice_info_usdf_retries_with_page2(self, mock_call_api, mock_extract_p2):
+        """When USDF test detected but rider name is missing, extracts and OCRs page 2 rotated."""
+        partial_response = {
+            "business_name": "USDF",
+            "document_type": "Test",
+            "document_title": None,
+            "invoice_date": None,
+            "invoice_number": None,
+            "patient_animal_name": None,
+            "account_type": None,
+            "account_last_4": None,
+            "usdf_test_name": "USDF Introductory A",
+            "usdf_rider_number": "99",
+            "usdf_rider_name": None,  # missing — triggers page 2 extraction
+        }
+        page2_response = {
+            "business_name": "USDF",
+            "document_type": "Test",
+            "document_title": None,
+            "invoice_date": "2026-06-13",
+            "invoice_number": None,
+            "patient_animal_name": None,
+            "account_type": None,
+            "account_last_4": None,
+            "usdf_test_name": "USDF Introductory A",
+            "usdf_rider_number": "99",
+            "usdf_rider_name": "Alex Rider",
+        }
+        mock_extract_p2.return_value = '/tmp/fake_usdf_rotated.jpg'
+        mock_call_api.side_effect = [json.dumps(partial_response), json.dumps(page2_response)]
+
+        result = extract_invoice_info("/path/to/usdf_test.pdf")
+
+        assert mock_call_api.call_count == 2
+        # Second call should use USDF_PAGE2_PROMPT with the rotated image path
+        second_call_args = mock_call_api.call_args_list[1]
+        assert second_call_args[0][0] == USDF_PAGE2_PROMPT
+        assert second_call_args[0][1] == '/tmp/fake_usdf_rotated.jpg'
+        assert result['usdf_rider_name'] == "Alex Rider"
+        assert result['invoice_date'] == "2026-06-13"
+
+    @patch('invoice_renamer._extract_usdf_page2_rotated')
+    @patch('invoice_renamer.call_llm_api')
+    def test_extract_invoice_info_usdf_no_retry_when_complete(self, mock_call_api, mock_extract_p2):
+        """When USDF test has all rider fields, no page 2 extraction is triggered."""
+        full_response = {
+            "business_name": "USDF", "document_type": "Test", "document_title": None,
+            "invoice_date": "2026-06-13", "invoice_number": None, "patient_animal_name": None,
+            "account_type": None, "account_last_4": None,
+            "usdf_test_name": "USDF Training 2",
+            "usdf_rider_number": "42",
+            "usdf_rider_name": "Jordan Lee",
+        }
+        mock_call_api.return_value = json.dumps(full_response)
+
+        result = extract_invoice_info("/path/to/usdf_test.pdf")
+
+        mock_extract_p2.assert_not_called()
+        assert result['usdf_rider_number'] == "42"
+        assert result['usdf_rider_name'] == "Jordan Lee"
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_usdf_dry_run(self, mock_extract, tmp_path, capsys):
+        """rename_invoice dry-run with USDF scorecard shows correct target name."""
+        # USDF competition date is always overridden to today, so the mocked
+        # extraction date must be today's date to avoid the mismatch override.
+        today = datetime.now().strftime("%Y-%m-%d")
+        today_compact = datetime.now().strftime("%Y%m%d")
+        src = tmp_path / f"dressage test scores {today_compact}.pdf"
+        src.write_bytes(b"%PDF")
+
+        mock_extract.return_value = {
+            'business_name': 'USDF',
+            'document_type': 'Test',
+            'document_title': None,
+            'invoice_date': today,
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+            'usdf_test_name': 'USDF Introductory A',
+            'usdf_rider_number': '99',
+            'usdf_rider_name': 'Alex Rider',
+        }
+
+        result = rename_invoice(str(src), dry_run=True)
+
+        assert result is True
+        captured = capsys.readouterr()
+        assert f"USDF Introductory A - 99 - Alex Rider {today_compact}.pdf" in captured.out
+
+    @patch('invoice_renamer.send_notification')
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_usdf_date_mismatch_warns_and_uses_today(self, mock_extract, mock_notify, tmp_path, capsys):
+        """When USDF extracted date doesn't match today, sends notification and uses today's date."""
+        src = tmp_path / "dressage test scores.pdf"
+        src.write_bytes(b"%PDF")
+
+        mock_extract.return_value = {
+            'business_name': 'USDF',
+            'document_type': 'Test',
+            'document_title': None,
+            'invoice_date': '2020-01-01',   # clearly past date, never today
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+            'usdf_test_name': 'USDF Training 3',
+            'usdf_rider_number': '16',
+            'usdf_rider_name': 'Pat Smith',
+        }
+
+        result = rename_invoice(str(src), dry_run=True)
+
+        assert result is True
+        mock_notify.assert_called_once()
+        notification_msg = mock_notify.call_args[0][1]
+        assert '20200101' in notification_msg
+        today = datetime.now().strftime("%Y%m%d")
+        assert today in notification_msg
+        captured = capsys.readouterr()
+        assert today in captured.out
+        assert '20200101' not in captured.out
+
+    @patch('invoice_renamer.send_notification')
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_usdf_correct_date_no_notification(self, mock_extract, mock_notify, tmp_path):
+        """When USDF extracted date matches today, no notification is sent."""
+        src = tmp_path / "dressage test scores.pdf"
+        src.write_bytes(b"%PDF")
+
+        today_iso = datetime.now().strftime("%Y-%m-%d")
+        mock_extract.return_value = {
+            'business_name': 'USDF',
+            'document_type': 'Test',
+            'document_title': None,
+            'invoice_date': today_iso,
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+            'usdf_test_name': 'USDF Training 3',
+            'usdf_rider_number': '16',
+            'usdf_rider_name': 'Pat Smith',
+        }
+
+        rename_invoice(str(src), dry_run=True)
+
+        mock_notify.assert_not_called()
+
+
+class TestFindPdftoppm:
+
+    @patch('invoice_renamer.os.path.exists')
+    def test_finds_homebrew_path(self, mock_exists):
+        """Returns /opt/homebrew/bin/pdftoppm when it exists."""
+        mock_exists.side_effect = lambda p: p == '/opt/homebrew/bin/pdftoppm'
+        assert _find_pdftoppm() == '/opt/homebrew/bin/pdftoppm'
+
+    @patch('invoice_renamer.subprocess.run')
+    @patch('invoice_renamer.os.path.exists')
+    def test_falls_back_to_which(self, mock_exists, mock_run):
+        """Falls back to 'which pdftoppm' when no known path exists."""
+        mock_exists.return_value = False
+        mock_run.return_value = MagicMock(returncode=0, stdout='/usr/local/bin/pdftoppm\n')
+        assert _find_pdftoppm() == '/usr/local/bin/pdftoppm'
+
+    @patch('invoice_renamer.subprocess.run')
+    @patch('invoice_renamer.os.path.exists')
+    def test_returns_none_when_not_found(self, mock_exists, mock_run):
+        """Returns None when pdftoppm is not found anywhere."""
+        mock_exists.return_value = False
+        mock_run.side_effect = subprocess.CalledProcessError(1, 'which')
+        assert _find_pdftoppm() is None
+
+
+class TestExtractUsdfPage2Rotated:
+
+    @patch('invoice_renamer.shutil.rmtree')
+    @patch('invoice_renamer.PIL.Image.open')
+    @patch('invoice_renamer.glob.glob')
+    @patch('invoice_renamer.subprocess.run')
+    @patch('invoice_renamer._find_pdftoppm')
+    def test_returns_rotated_jpeg(self, mock_find, mock_run, mock_glob, mock_pil_open, mock_rmtree, tmp_path):
+        """Returns path to rotated JPEG when page 2 is successfully extracted."""
+        mock_find.return_value = '/opt/homebrew/bin/pdftoppm'
+        mock_run.return_value = MagicMock(returncode=0)
+        mock_glob.return_value = ['/fakedir/page-02.jpg']
+
+        mock_img = MagicMock()
+        mock_rotated = MagicMock()
+        mock_pil_open.return_value = mock_img
+        mock_img.rotate.return_value = mock_rotated
+
+        result = _extract_usdf_page2_rotated('/path/to/test.pdf')
+
+        assert result is not None
+        assert result.endswith('.jpg')
+        mock_img.rotate.assert_called_once_with(90, expand=True)
+        mock_rotated.save.assert_called_once()
+
+    @patch('invoice_renamer._find_pdftoppm')
+    def test_returns_none_when_pdftoppm_missing(self, mock_find):
+        """Returns None when pdftoppm is not installed."""
+        mock_find.return_value = None
+        result = _extract_usdf_page2_rotated('/path/to/test.pdf')
+        assert result is None
+
+    @patch('invoice_renamer.shutil.rmtree')
+    @patch('invoice_renamer.glob.glob')
+    @patch('invoice_renamer.subprocess.run')
+    @patch('invoice_renamer._find_pdftoppm')
+    def test_returns_none_when_no_page2_output(self, mock_find, mock_run, mock_glob, mock_rmtree):
+        """Returns None when pdftoppm produces no output for page 2."""
+        mock_find.return_value = '/opt/homebrew/bin/pdftoppm'
+        mock_run.return_value = MagicMock(returncode=0)
+        mock_glob.return_value = []
+        result = _extract_usdf_page2_rotated('/path/to/test.pdf')
+        assert result is None
