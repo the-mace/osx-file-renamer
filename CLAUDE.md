@@ -2,6 +2,15 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Before starting any work
+
+Dependabot may have auto-merged dependency/CI updates to `main`. **Always
+pull first** — see `AGENTS.md`. Quick path:
+
+```bash
+git checkout main && git pull --ff-only
+```
+
 ## Project Overview
 
 OSX File Renamer is a command-line tool that uses AI (LLM APIs via LiteLLM) to automatically rename invoice and document files based on their content. It analyzes documents to extract business names, document types, dates, and other metadata, then applies consistent naming conventions.

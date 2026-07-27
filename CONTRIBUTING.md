@@ -23,6 +23,7 @@ This project aims to be welcoming and inclusive. Please be respectful and constr
 
 Before you begin:
 
+- **Pull latest `main` first.** Dependabot auto-merges dependency and Actions updates after CI; local checkouts are often behind. `git checkout main && git pull --ff-only`
 - Check existing [issues](https://github.com/the-mace/osx-file-renamer/issues) to see if your bug/feature is already being discussed
 - For major changes, open an issue first to discuss what you'd like to change
 - For minor fixes (typos, small bugs), feel free to submit a PR directly
