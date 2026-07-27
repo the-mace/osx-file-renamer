@@ -95,34 +95,36 @@ make lint
 #### llm_client.py
 
 - LLM API client for document analysis (supports Claude, GPT-4, Grok, Gemini, and 100+ models via LiteLLM)
-- File processing pipeline: PDF → image extraction/conversion → compression → API call
+- File processing pipeline: PDF → text (pdftotext) or image conversion → compression → API call
 - Supports multiple file types: PDFs, images (JPG, PNG, GIF, BMP, WebP, TIFF), text
 - Image compression to meet API size limits (10MB base64)
-- Constants defined at top: MAX_RAW_SIZE, MAX_BASE64_SIZE, timeouts, DEFAULT_MODEL
+- Constants defined at top: MAX_RAW_SIZE, MAX_BASE64_SIZE, DEFAULT_MAX_PAGES (2), timeouts, DEFAULT_MODEL
 - Custom exceptions: LLMClientError, FileProcessingError, APIError
 - Automatically selects vision models when processing images
+- In-process file-content cache so date/USDF retries reuse extraction work
 
 ### Key Architecture Patterns
 
-1. **Subprocess Communication**: invoice_renamer.py calls llm_client.py as subprocess rather than importing it directly. This isolation helps with error handling and allows independent execution.
+1. **In-process LLM client**: invoice_renamer imports and calls llm_client in-process (avoids Python/LiteLLM cold start). Subprocess fallback remains if import fails. llm_client is still runnable standalone.
 
 2. **PDF Processing Pipeline**:
-   - Text extraction via pdftotext (fast path for text-based PDFs)
-   - Fallback to image extraction via pdfimages (for scanned PDFs)
-   - Fallback to full PDF→image conversion via pdftoppm
-   - Image compression using ImageMagick/pngquant if needed
+   - Text extraction via pdftotext on pages 1–2 by default (fast path for text-based PDFs; `--all-pages` for full doc)
+   - Fallback to image extraction via pdfimages (pages 1–2 by default)
+   - Fallback to full PDF→JPEG conversion via pdftoppm (pages 1–2 by default; covers cover+content)
+   - Image compression using ImageMagick / in-process helpers if needed
 
 3. **File Type Detection**: Uses mimetypes module + extension checking to determine processing path
 
-4. **Size Management**: Multi-stage compression pipeline (PIL optimization → ImageMagick quality reduction → pngquant) to meet API limits
+4. **Size Management**: Multi-stage compression pipeline (PIL optimization → ImageMagick quality reduction) to meet API limits
 
 5. **Naming Convention**:
 
    ```
-   Business Name [Account-Type] Document-Type [Last4] [- Patient/Animal] [Invoice#] Date
+   Vendor [Account-Type] Topic [AccountId] [- Patient/Animal] [Invoice#] Date
    ```
 
-   Examples: "Chase Credit Card Statement 20240115.pdf", "Dr Smith Invoice ACS-1234 20240115.pdf"
+   Short vendor names preferred (Amex, BofA, Chase). Account id is last-4 or short alphanumeric (low PII).
+   Examples: "Amex CC Statement 1000 20240115.pdf", "Dr Smith Invoice ACS12B4 20240115.pdf"
 
 ### API Configuration
 
@@ -138,8 +140,8 @@ The tool uses LiteLLM for flexible LLM provider support. Configuration via envir
 
 **Model Selection**:
 
-- `LLM_MODEL` - Default model to use (optional, defaults to `grok-4-1-fast-reasoning` if `GROK_API_KEY` is set)
-- Examples: `claude-3-5-sonnet-20241022`, `gpt-4`, `gemini-pro`, `grok-4-1-fast-reasoning`
+- `LLM_MODEL` - Default model to use (optional, defaults to fast non-reasoning `xai/grok-4.20-0309-non-reasoning`)
+- Examples: `claude-3-5-sonnet-20241022`, `gpt-4`, `gemini-pro`, `xai/grok-4.20-0309-non-reasoning`
 
 **Model Auto-Selection**:
 
@@ -164,6 +166,47 @@ System tools required:
 - pngquant (optional, better compression)
 
 Python packages: litellm, titlecase, pytest, pytest-mock, pytest-cov, pytest-xdist
+
+### Future Optimizations (speed / cost)
+
+If renames still feel slow or vision API cost becomes an issue, consider these in order of likely ROI. Prefer measuring with path/timing logs before adding dependencies.
+
+**Already done (baseline):**
+
+- In-process `llm_client` (no Python/LiteLLM cold start per call)
+- In-process file-content cache (date/USDF retries reuse extraction)
+- Default pages 1–2 (cover + content) for text and vision
+- Fast non-reasoning default model; vision `detail: low`; JPEG page renders
+- Title/vendor/type dedupe for shorter filenames
+
+**Next candidates if still slow or expensive:**
+
+1. **Path + timing logs** — Log which path ran (`pdftotext` / `pdfimages` / `pdftoppm`) and wall times for extract vs API. Makes real-world bottlenecks obvious before adding tools.
+
+2. **Local OCR (Tesseract) as optional scan fast path** — Not used today; vision LLM “reads” page images instead.
+   - *When it helps:* clean upright B&W scans / phone docs with good contrast → rasterize pages 1–2 → `tesseract` → if text quality high, use **text LLM** (cheap/fast) and skip vision.
+   - *When it hurts:* skewed photos, glare, low contrast, heavy graphics — vision models usually win.
+   - *Suggested design:* optional `tesseract` dependency; confidence/length gate; fall back to vision on weak OCR. Do **not** make Tesseract required for install.
+   - *Does not replace:* page selection (pages 1–2 / adaptive page 2) — OCR the right pages first.
+
+3. **Skip or demote `pdfimages`** — Often returns logos/icons, not full pages, wasting a vision call. Prefer `pdftoppm` page renders for fidelity; keep `pdfimages` only when a single large embedded image looks page-sized.
+
+4. **Cheaper / faster models** — Separate `LLM_MODEL` (text) vs `LLM_VISION_MODEL` env vars; allow a tiny local or budget cloud model for structured JSON when quality is good enough. Keep reasoning models opt-in for hard cases.
+
+5. **Adaptive extra pages** — If Vendor or date missing after pages 1–2, fetch page 3 only (generalize USDF page-2 retry) instead of `--all-pages`.
+
+6. **Raise text-quality gate / hybrid path** — Thin embedded text layers (bad scanner OCR) currently take the text path with `MIN_MEANINGFUL_TEXT = 10`. Raise the threshold or send **text + page-1 image** when text looks sparse/garbage so names stay accurate without always using full vision.
+
+7. **Batch / daemon mode** — For folder renames, keep one long-lived process so LiteLLM stays warm across files (bigger win than per-file micro-opts).
+
+8. **Shared poppler path finder** — Duplicated binary discovery in `invoice_renamer` and `llm_client`; small cleanup only.
+
+**Naming constraints to preserve when optimizing:**
+
+- Short filenames: Amex not “American Express”; CC not “Credit Card”
+- Low PII: last-4 or short alphanumeric account ids only
+- Priority fields: Vendor → Topic → AccountId → Date
+- Lowercase extensions always
 
 ## Project Rules
 

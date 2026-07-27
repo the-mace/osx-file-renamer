@@ -8,7 +8,7 @@ analysis of various file types including PDFs, images, and documents.
 
 Requirements:
 - LLM_API_KEY environment variable or ~/.env file (provider-specific, e.g., GROK_API_KEY, ANTHROPIC_API_KEY)
-- LLM_MODEL environment variable (optional, defaults to grok-4.3)
+- LLM_MODEL environment variable (optional, defaults to fast non-reasoning Grok)
 - ImageMagick (for image compression)
 - Poppler tools (for PDF processing): pdftotext, pdftoppm, pdfimages
 """
@@ -52,18 +52,25 @@ class APIError(LLMClientError):
 MAX_RAW_SIZE = 7_500_000  # ~7.5MB raw = ~10MB base64
 MAX_BASE64_SIZE = 10_000_000  # 10MB base64 limit
 DEFAULT_PDF_DPI = 100
+DEFAULT_MAX_PAGES = 2  # Pages 1-2 by default (covers logo/cover + content header)
 PDF_EXTRACTION_TIMEOUT = 15
 CONVERSION_TIMEOUT = 60
 COMPRESSION_TIMEOUT = 30
 API_TIMEOUT = 120  # 120 seconds for LLM API calls
 MIN_MEANINGFUL_TEXT = 10
 ENV_FILE_PATH = "~/.env"
-DEFAULT_MODEL = "xai/grok-4.3"  # LiteLLM model name for Grok 4.3 reasoning
-VISION_MODEL = "xai/grok-4.3"  # LiteLLM model name for Grok 4.3 reasoning with vision
+# Non-reasoning models are much faster for structured JSON extraction
+DEFAULT_MODEL = "xai/grok-4.20-0309-non-reasoning"
+VISION_MODEL = "xai/grok-4.20-0309-non-reasoning"
+# "low" is faster/cheaper; page headers rarely need high-detail tokens
+IMAGE_DETAIL = "low"
 
 # Supported file extensions
 IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif']
 COMPRESSED_FORMATS = ['.png', '.bmp', '.tiff', '.tif', '.pbm', '.ppm', '.pgm']
+
+# In-process cache so date/USDF retries reuse extracted content (same process)
+_file_content_cache: Dict[tuple, Any] = {}
 
 
 def _cleanup_temp_file(temp_path: Optional[str]) -> None:
@@ -189,7 +196,7 @@ def process_image_file(file_path: str, mime_type: Optional[str] = None) -> Dict[
             "type": "image_url",
             "image_url": {
                 "url": f"data:{mime_type or 'image/jpeg'};base64,{base64_data}",
-                "detail": "high"
+                "detail": IMAGE_DETAIL
             }
         }
     except Exception as e:
@@ -263,10 +270,10 @@ def extract_embedded_images(file_path, all_pages=False):
 
             # Extract images (with timeout)
             print("Attempting to extract embedded images...", file=sys.stderr)
-            # Extract only first page by default
+            # Default: pages 1-2 (cover + content); --all-pages removes the limit
             pdfimages_args = [pdfimages_cmd, '-j', '-p']
             if not all_pages:
-                pdfimages_args.extend(['-f', '1', '-l', '1'])  # First page only
+                pdfimages_args.extend(['-f', '1', '-l', str(DEFAULT_MAX_PAGES)])
             pdfimages_args.extend([file_path, temp_prefix])
 
             result = subprocess.run(pdfimages_args, capture_output=True, text=True, timeout=PDF_EXTRACTION_TIMEOUT)
@@ -342,17 +349,15 @@ def extract_embedded_images(file_path, all_pages=False):
 
                         return process_image_file(img_file, mime_type)
 
-                    if all_pages and len(extracted_files) > 1:
-                        # Process multiple images
-                        print(f"Found {len(extracted_files)} embedded image(s), processing all pages", file=sys.stderr)
-                        images = []
-                        for img_file in extracted_files:
-                            images.append(process_extracted_image(img_file))
+                    # Cap how many embedded images we send (logos can flood extraction)
+                    files_to_use = extracted_files if all_pages else extracted_files[:DEFAULT_MAX_PAGES]
+                    if len(files_to_use) > 1:
+                        print(f"Found {len(extracted_files)} embedded image(s), processing {len(files_to_use)}", file=sys.stderr)
+                        images = [process_extracted_image(img_file) for img_file in files_to_use]
                         return {"type": "multi_image", "images": images}
                     else:
-                        # Process only first image
-                        image_file = extracted_files[0]
-                        print(f"Found {len(extracted_files)} embedded image(s), using first page: {os.path.basename(image_file)}", file=sys.stderr)
+                        image_file = files_to_use[0]
+                        print(f"Found {len(extracted_files)} embedded image(s), using: {os.path.basename(image_file)}", file=sys.stderr)
                         return process_extracted_image(image_file)
                 else:
                     print("No embedded images extracted", file=sys.stderr)
@@ -369,15 +374,19 @@ def extract_embedded_images(file_path, all_pages=False):
         return None
 
 
-def convert_pdf_to_images(file_path, max_pages=5):
-    """Convert multiple PDF pages to images and return combined content"""
+def convert_pdf_to_images(file_path, max_pages=DEFAULT_MAX_PAGES):
+    """Convert PDF pages to JPEG images and return content for the vision API.
+
+    Default max_pages is DEFAULT_MAX_PAGES (2) so cover pages plus the first content
+    page are both available. Pass None for all pages.
+    """
 
     try:
-        # Create temporary file for the images
-        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+        # Create temporary file for the images (JPEG is smaller/faster than PNG for vision)
+        with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp_file:
             temp_image_path = tmp_file.name
 
-        # Convert multiple pages of PDF to PNG (limit to max_pages to avoid huge documents)
+        # Convert pages of PDF to JPEG (limit to max_pages to avoid huge documents)
         # Try to find pdftoppm in common locations
         pdftoppm_paths = ['/opt/homebrew/bin/pdftoppm', '/usr/bin/pdftoppm', '/usr/local/bin/pdftoppm']
         pdftoppm_cmd = None
@@ -394,14 +403,13 @@ def convert_pdf_to_images(file_path, max_pages=5):
             except subprocess.CalledProcessError:
                 raise Exception("pdftoppm not found. Please install poppler-utils.")
 
-        # Use lower DPI (100 instead of default 300) to reduce processing time and file size
-        # Add short timeout to prevent hanging on problematic PDFs
-        pdftoppm_args = [pdftoppm_cmd, '-png', '-r', '100', '-f', '1']
+        # Lower DPI + JPEG keeps tokens and conversion time down
+        pdftoppm_args = [pdftoppm_cmd, '-jpeg', '-r', str(DEFAULT_PDF_DPI), '-f', '1']
         if max_pages is not None:
             pdftoppm_args.extend(['-l', str(max_pages)])
-            print(f"Converting PDF to PNG at 100 DPI (max {max_pages} pages)...", file=sys.stderr)
+            print(f"Converting PDF to JPEG at {DEFAULT_PDF_DPI} DPI (max {max_pages} pages)...", file=sys.stderr)
         else:
-            print("Converting PDF to PNG at 100 DPI (all pages)...", file=sys.stderr)
+            print(f"Converting PDF to JPEG at {DEFAULT_PDF_DPI} DPI (all pages)...", file=sys.stderr)
         pdftoppm_args.extend([file_path, temp_image_path[:-4]])
 
         result = subprocess.run(pdftoppm_args, capture_output=True, text=True, check=True, timeout=CONVERSION_TIMEOUT)
@@ -412,7 +420,7 @@ def convert_pdf_to_images(file_path, max_pages=5):
         page_num = 1
 
         while True:
-            actual_image_path = temp_image_path[:-4] + f'-{page_num}.png'
+            actual_image_path = temp_image_path[:-4] + f'-{page_num}.jpg'
             print(f"Looking for image: {actual_image_path}", file=sys.stderr)
             if not os.path.exists(actual_image_path):
                 print(f"No more images found, stopping at page {page_num}", file=sys.stderr)
@@ -425,37 +433,22 @@ def convert_pdf_to_images(file_path, max_pages=5):
             # Hard limit: 10MB base64 = ~7.5MB raw file
             if len(file_data) > MAX_RAW_SIZE:
                 print(f"Image too large ({len(file_data):,} bytes), compressing...", file=sys.stderr)
-                # Try to compress using pngquant if available, otherwise reduce DPI further
                 try:
-                    # Create a compressed version
-                    compressed_path = actual_image_path.replace('.png', '_compressed.png')
-
-                    # Try pngquant first (best compression for text)
-                    pngquant_result = subprocess.run(['pngquant', '--force', '--output', compressed_path, actual_image_path],
-                                                     capture_output=True, timeout=COMPRESSION_TIMEOUT)
-
-                    if pngquant_result.returncode == 0 and os.path.exists(compressed_path):
-                        # Use compressed version if it's smaller
-                        with open(compressed_path, 'rb') as f:
-                            compressed_data = f.read()
-                        if len(compressed_data) < len(file_data):
-                            file_data = compressed_data
-                            print(f"Compressed to {len(file_data):,} bytes", file=sys.stderr)
-                        try:
-                            os.unlink(compressed_path)
-                        except FileNotFoundError:
-                            pass
+                    compressed = compress_image(actual_image_path, file_data, MAX_RAW_SIZE)
+                    if compressed:
+                        file_data = compressed
+                        print(f"Compressed to {len(file_data):,} bytes", file=sys.stderr)
                     else:
-                        # Fallback: try progressively lower DPI until we get under the limit
-                        for dpi in [100, 75, 50]:
-                            print(f"Pngquant not available, trying DPI {dpi}...", file=sys.stderr)
-                            low_dpi_path = actual_image_path.replace('.png', f'_dpi{dpi}.png')
+                        # Fallback: re-render at lower DPI
+                        for dpi in [75, 50]:
+                            print(f"Trying DPI {dpi}...", file=sys.stderr)
+                            low_dpi_path = actual_image_path.replace('.jpg', f'_dpi{dpi}.jpg')
                             try:
-                                subprocess.run([pdftoppm_cmd, '-png', '-r', str(dpi), '-f', str(page_num), '-l', str(page_num),
+                                subprocess.run([pdftoppm_cmd, '-jpeg', '-r', str(dpi), '-f', str(page_num), '-l', str(page_num),
                                                file_path, low_dpi_path[:-4]],
                                                capture_output=True, text=True, check=True, timeout=COMPRESSION_TIMEOUT)
 
-                                low_dpi_actual = low_dpi_path[:-4] + f'-{page_num}.png'
+                                low_dpi_actual = low_dpi_path[:-4] + f'-{page_num}.jpg'
                                 if os.path.exists(low_dpi_actual):
                                     with open(low_dpi_actual, 'rb') as f:
                                         test_data = f.read()
@@ -468,15 +461,12 @@ def convert_pdf_to_images(file_path, max_pages=5):
                                         file_data = test_data
                                         break
                                     elif dpi == 50:
-                                        # This is our last attempt - use it even if oversized
-                                        # The final hard check below will handle the error
                                         print(f"Warning: Even at lowest DPI (50), image is {len(test_data):,} bytes", file=sys.stderr)
                                         file_data = test_data
                             except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
                                 continue
 
                 except (subprocess.CalledProcessError, FileNotFoundError):
-                    # If compression fails, we still need to check if it's under the limit
                     print("Warning: Could not compress image", file=sys.stderr)
 
             # Final hard check - fail if still too large
@@ -495,8 +485,8 @@ def convert_pdf_to_images(file_path, max_pages=5):
             image_content.append({
                 "type": "image_url",
                 "image_url": {
-                    "url": f"data:image/png;base64,{base64_data}",
-                    "detail": "high"
+                    "url": f"data:image/jpeg;base64,{base64_data}",
+                    "detail": IMAGE_DETAIL
                 }
             })
 
@@ -535,14 +525,33 @@ def convert_pdf_to_images(file_path, max_pages=5):
         sys.exit(1)
 
 
+def clear_file_content_cache():
+    """Clear the in-process file content cache (e.g. between renames)."""
+    _file_content_cache.clear()
+
+
 def read_file_content(file_path, all_pages=False):
-    """Read file content and return appropriate format for LLM API"""
+    """Read file content and return appropriate format for LLM API.
+
+    Results are cached in-process by (abspath, mtime, all_pages) so retries
+    (missing date, USDF page 2) do not re-run pdftotext/pdftoppm.
+    """
     if not os.path.exists(file_path):
         print(f"Error: File '{file_path}' not found", file=sys.stderr)
         sys.exit(1)
 
+    try:
+        mtime = os.path.getmtime(file_path)
+    except OSError:
+        mtime = None
+    cache_key = (os.path.abspath(file_path), mtime, all_pages)
+    if cache_key in _file_content_cache:
+        print("Using cached file content...", file=sys.stderr)
+        return _file_content_cache[cache_key]
+
     mime_type, _ = mimetypes.guess_type(file_path)
     file_ext = os.path.splitext(file_path)[1].lower()
+    max_pages = None if all_pages else DEFAULT_MAX_PAGES
 
     try:
         # Handle PDFs with text extraction, fallback to image
@@ -565,8 +574,13 @@ def read_file_content(file_path, all_pages=False):
                     except subprocess.CalledProcessError:
                         raise Exception("pdftotext not found. Please install poppler-utils.")
 
-                result = subprocess.run([pdftotext_cmd, file_path, '-'],
-                                        capture_output=True, text=True, check=True)
+                # Limit to first N pages by default so long statements don't bury the header
+                pdftotext_args = [pdftotext_cmd]
+                if not all_pages:
+                    pdftotext_args.extend(['-f', '1', '-l', str(DEFAULT_MAX_PAGES)])
+                pdftotext_args.extend([file_path, '-'])
+
+                result = subprocess.run(pdftotext_args, capture_output=True, text=True, check=True)
                 text_content = result.stdout.strip()
 
                 # Check if meaningful text was extracted (more than just whitespace/control chars)
@@ -577,35 +591,46 @@ def read_file_content(file_path, all_pages=False):
                     # Try extracting embedded images first (faster for PDFs with embedded images)
                     extracted_image = extract_embedded_images(file_path, all_pages=all_pages)
                     if extracted_image:
+                        _file_content_cache[cache_key] = extracted_image
                         return extracted_image
                     print("No embedded images found. Converting to images for vision analysis...", file=sys.stderr)
-                    max_pages = None if all_pages else 1
-                    return convert_pdf_to_images(file_path, max_pages=max_pages)
+                    content = convert_pdf_to_images(file_path, max_pages=max_pages)
+                    _file_content_cache[cache_key] = content
+                    return content
                 else:
-                    return {"type": "text", "content": text_content}
+                    content = {"type": "text", "content": text_content}
+                    _file_content_cache[cache_key] = content
+                    return content
 
             except subprocess.CalledProcessError as e:
                 print(f"Text extraction failed: {e}. Trying image extraction first, then conversion...", file=sys.stderr)
                 # Try extracting embedded images first (faster for PDFs with embedded images)
                 extracted_image = extract_embedded_images(file_path, all_pages=all_pages)
                 if extracted_image:
+                    _file_content_cache[cache_key] = extracted_image
                     return extracted_image
-                max_pages = None if all_pages else 1
-                return convert_pdf_to_images(file_path, max_pages=max_pages)
+                content = convert_pdf_to_images(file_path, max_pages=max_pages)
+                _file_content_cache[cache_key] = content
+                return content
 
         # Handle image files
         elif file_ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif']:
-            return process_image_file(file_path, mime_type)
+            content = process_image_file(file_path, mime_type)
+            _file_content_cache[cache_key] = content
+            return content
 
         # For other files, try to read as text first
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                return {"type": "text", "content": content}
+                content = {"type": "text", "content": f.read()}
+                _file_content_cache[cache_key] = content
+                return content
         except UnicodeDecodeError:
             # If text reading fails, check if it's a supported image format
             if file_ext in IMAGE_EXTENSIONS:
-                return process_image_file(file_path, mime_type)
+                content = process_image_file(file_path, mime_type)
+                _file_content_cache[cache_key] = content
+                return content
             else:
                 print(f"Error: File type '{file_ext}' is not supported. Supported formats: {', '.join(['.pdf'] + IMAGE_EXTENSIONS + ['text files'])}", file=sys.stderr)
                 sys.exit(1)
@@ -651,7 +676,7 @@ def call_llm_api(prompt, model=None, file_path=None, all_pages=False, auto_visio
         prompt: The prompt to send to the LLM
         model: Model to use (defaults to LLM_MODEL env var or DEFAULT_MODEL)
         file_path: Optional file to include in the request
-        all_pages: Process all pages of PDF (default: first page only)
+        all_pages: Process all pages of PDF (default: first DEFAULT_MAX_PAGES pages)
         auto_vision: Automatically switch to vision model for images
 
     Returns:
@@ -778,7 +803,7 @@ Examples:
                              "Examples: claude-3-5-sonnet-20241022, gpt-4, gemini-pro, grok-4.3")
     parser.add_argument("--file", help="Optional file to include (PDFs auto-fallback text→vision, text files use text model, images use vision model)")
     parser.add_argument("--all-pages", action="store_true",
-                        help="Process all pages of PDF (default: first page only)")
+                        help=f"Process all pages of PDF (default: first {DEFAULT_MAX_PAGES} pages)")
 
     args = parser.parse_args()
 

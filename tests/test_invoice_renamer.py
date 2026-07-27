@@ -57,48 +57,44 @@ class TestSetupLogging:
 
 class TestCallLLMApi:
 
-    @patch('invoice_renamer.subprocess.run')
-    def test_call_llm_api_success(self, mock_run):
-        """Test call_llm_api successful execution."""
-        mock_run.return_value = MagicMock(returncode=0, stdout="API Response")
+    @patch('llm_client.call_llm_api')
+    def test_call_llm_api_success(self, mock_llm):
+        """Test call_llm_api successful in-process execution."""
+        mock_llm.return_value = "API Response"
 
         result = call_llm_api("test prompt", "/path/to/file.pdf")
 
         assert result == "API Response"
-        mock_run.assert_called_once()
-        args, kwargs = mock_run.call_args
-        # Should use sys.executable (already re-exec'd to correct version)
-        assert args[0][0] == sys.executable
-        assert 'llm_client.py' in args[0][1]
-        assert args[0][2] == "test prompt"
-        assert args[0][3] == '--file'
-        assert args[0][4] == "/path/to/file.pdf"
+        mock_llm.assert_called_once()
+        kwargs = mock_llm.call_args.kwargs
+        assert kwargs.get('file_path') == "/path/to/file.pdf"
+        assert kwargs.get('all_pages') is False
+        assert mock_llm.call_args.args[0] == "test prompt"
 
-    @patch('invoice_renamer.subprocess.run')
-    def test_call_llm_api_with_all_pages(self, mock_run):
+    @patch('llm_client.call_llm_api')
+    def test_call_llm_api_with_all_pages(self, mock_llm):
         """Test call_llm_api with all_pages flag."""
-        mock_run.return_value = MagicMock(returncode=0, stdout="Full API Response")
+        mock_llm.return_value = "Full API Response"
 
         result = call_llm_api("test prompt", "/path/to/file.pdf", all_pages=True)
 
         assert result == "Full API Response"
-        args, kwargs = mock_run.call_args
-        assert '--all-pages' in args[0]
+        assert mock_llm.call_args.kwargs.get('all_pages') is True
 
-    @patch('invoice_renamer.subprocess.run')
-    def test_call_llm_api_file_not_found(self, mock_run):
-        """Test call_llm_api when llm_client.py script not found."""
-        mock_run.side_effect = FileNotFoundError("python3 not found")
+    @patch('llm_client.call_llm_api')
+    def test_call_llm_api_system_exit_raises_runtime_error(self, mock_llm):
+        """Test call_llm_api converts SystemExit from llm_client to RuntimeError."""
+        mock_llm.side_effect = SystemExit(1)
 
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(RuntimeError):
             call_llm_api("test prompt", "/path/to/file.pdf")
 
-    @patch('invoice_renamer.subprocess.run')
-    def test_call_llm_api_subprocess_error(self, mock_run):
-        """Test call_llm_api subprocess execution error."""
-        mock_run.side_effect = subprocess.CalledProcessError(1, 'cmd', stderr="SSL error")
+    @patch('llm_client.call_llm_api')
+    def test_call_llm_api_propagates_errors(self, mock_llm):
+        """Test call_llm_api propagates unexpected errors."""
+        mock_llm.side_effect = RuntimeError("SSL error")
 
-        with pytest.raises(subprocess.CalledProcessError):
+        with pytest.raises(RuntimeError):
             call_llm_api("test prompt", "/path/to/file.pdf")
 
 
@@ -205,6 +201,13 @@ class TestCleanFilename:
     def test_clean_filename_credit_card_abbrev(self):
         """Test clean_filename abbreviates common terms."""
         assert clean_filename("Credit Card") == "CC"
+
+    def test_clean_filename_vendor_abbreviations(self):
+        """Test clean_filename shortens common vendor names."""
+        assert clean_filename("American Express") == "Amex"
+        assert clean_filename("Bank of America") == "BofA"
+        assert clean_filename("JPMorgan Chase") == "Chase"
+        assert clean_filename("Citibank") == "Citi"
 
 
 class TestFormatDate:
@@ -523,6 +526,77 @@ class TestRenameInvoiceConversion:
         captured = capsys.readouterr()
         # The new filename should end in .pdf
         assert ".pdf" in captured.out
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_output_extension_always_lowercase(self, mock_extract, tmp_path, capsys):
+        """Renamed files always use lowercase extensions (.pdf not .PDF)."""
+        src = tmp_path / "doc.PDF"
+        src.write_bytes(b"%PDF")
+
+        mock_extract.return_value = {
+            'business_name': 'Test Company',
+            'document_type': 'Invoice',
+            'document_title': None,
+            'invoice_date': '2024-01-15',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+        }
+
+        result = rename_invoice(str(src), dry_run=True)
+
+        assert result is True
+        captured = capsys.readouterr()
+        # Dry-run may mention the original "doc.PDF"; the target name must be lowercase
+        assert "to Test Invoice 20240115.pdf" in captured.out
+        assert "to Test Invoice 20240115.PDF" not in captured.out
+
+    def test_build_filename_parts_lowercases_extension(self):
+        """_build_filename_parts normalizes extensions to lowercase."""
+        from invoice_renamer import _build_filename_parts
+        fields = {
+            'business_name': 'Acme',
+            'document_type': 'Invoice',
+            'document_title': None,
+            'invoice_date': '20240115',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        filename, _ = _build_filename_parts(fields, '.PDF')
+        assert filename.endswith('.pdf')
+        assert not filename.endswith('.PDF')
+
+    def test_select_display_topic_drops_redundant_title(self):
+        """Redundant titles like 'Travel Itinerary' collapse to document type."""
+        from invoice_renamer import _select_display_topic, _build_filename_parts
+
+        assert _select_display_topic('Alaska Cruise', 'Itinerary', 'Travel Itinerary') == 'Itinerary'
+        assert _select_display_topic('Alaska Cruise', 'Itinerary', 'Alaska Cruise Itinerary') == 'Itinerary'
+        assert _select_display_topic('IRS', 'Notice', 'Tax Delinquent Notice') == 'Tax Delinquent'
+        assert _select_display_topic('Acme Insurance', 'Notice', 'Automobile Policy Packet') == 'Automobile Policy Packet'
+        assert _select_display_topic('Bank', 'Statement', None) == 'Statement'
+
+        fields = {
+            'business_name': 'Alaska Cruise',
+            'document_type': 'Itinerary',
+            'document_title': 'Travel Itinerary',
+            'invoice_date': '20260718',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == 'Alaska Cruise Itinerary 20260718.pdf'
 
 
 class TestMain:
@@ -854,14 +928,18 @@ class TestUsdfDressageTest:
     @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_usdf_dry_run(self, mock_extract, tmp_path, capsys):
         """rename_invoice dry-run with USDF scorecard shows correct target name."""
-        src = tmp_path / "dressage test scores 20260613.pdf"
+        # USDF competition date is always overridden to today, so the mocked
+        # extraction date must be today's date to avoid the mismatch override.
+        today = datetime.now().strftime("%Y-%m-%d")
+        today_compact = datetime.now().strftime("%Y%m%d")
+        src = tmp_path / f"dressage test scores {today_compact}.pdf"
         src.write_bytes(b"%PDF")
 
         mock_extract.return_value = {
             'business_name': 'USDF',
             'document_type': 'Test',
             'document_title': None,
-            'invoice_date': '2026-06-13',
+            'invoice_date': today,
             'invoice_number': None,
             'patient_animal_name': None,
             'account_type': None,
@@ -875,7 +953,7 @@ class TestUsdfDressageTest:
 
         assert result is True
         captured = capsys.readouterr()
-        assert "USDF Introductory A - 99 - Alex Rider 20260613.pdf" in captured.out
+        assert f"USDF Introductory A - 99 - Alex Rider {today_compact}.pdf" in captured.out
 
     @patch('invoice_renamer.send_notification')
     @patch('invoice_renamer.extract_invoice_info')
