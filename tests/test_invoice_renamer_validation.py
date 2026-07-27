@@ -228,3 +228,72 @@ class TestRenameInvoiceAccountNumberValidation:
         # Should extract just digits: 1234
         expected = tmp_path / "Bank Savings Statement 1234 20240115.pdf"
         assert expected.exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_alphanumeric_account_id(self, mock_extract, tmp_path):
+        """Test short alphanumeric account identifiers are kept."""
+        test_file = tmp_path / "test.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'Bank',
+            'document_type': 'Statement',
+            'invoice_date': '2024-01-15',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'Brokerage',
+            'account_last_4': 'A12B'
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "Bank Brokerage Statement A12B 20240115.pdf"
+        assert expected.exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_alphanumeric_invoice_number(self, mock_extract, tmp_path):
+        """Test short alphanumeric invoice numbers are included."""
+        test_file = tmp_path / "test.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'Vendor',
+            'document_type': 'Invoice',
+            'invoice_date': '2024-01-15',
+            'invoice_number': 'ACS-12B4',
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "Vendor Invoice ACS12B4 20240115.pdf"
+        assert expected.exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_amex_abbreviation(self, mock_extract, tmp_path):
+        """Test American Express is abbreviated to Amex in filenames."""
+        test_file = tmp_path / "test.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'American Express',
+            'document_type': 'Statement',
+            'invoice_date': '2024-01-15',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'Credit Card',
+            'account_last_4': '1000'
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "Amex CC Statement 1000 20240115.pdf"
+        assert expected.exists()

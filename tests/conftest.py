@@ -4,6 +4,22 @@ import base64
 import json
 
 
+@pytest.fixture(autouse=True)
+def clear_llm_file_content_cache():
+    """Avoid cross-test pollution from llm_client's in-process content cache."""
+    try:
+        from llm_client import clear_file_content_cache
+        clear_file_content_cache()
+    except ImportError:
+        pass
+    yield
+    try:
+        from llm_client import clear_file_content_cache
+        clear_file_content_cache()
+    except ImportError:
+        pass
+
+
 @pytest.fixture
 def sample_jpeg_data():
     """Minimal valid JPEG header bytes for testing."""
