@@ -98,26 +98,43 @@ Keep names SHORT — filenames should be concise and recognizable, not legal ful
    - Account identifier (account_last_4): SHORT id for filenames — low PII
      * Prefer last 4 digits of account/card (xxxx1234, ending in 1234, "2-51000" → "1000")
      * Short alphanumeric refs OK (e.g. "A12B") — never full account/card numbers
+     * Also extract for utility, telecom, and other billed service accounts even when
+       there is no bank-style account_type (leave account_type null; still set account_last_4)
    - Extract these even from notices/letters if they reference a specific account
    - IMPORTANT: If this is a portfolio summary or overview showing MULTIPLE accounts (2 or more different account numbers):
      * Set account_type to "Portfolio"
      * Set account_last_4 to null
-   - For single account documents: extract the specific account type and short account id
-   - For non-financial account documents: leave these null
+   - For single account documents: extract the specific account type (when known) and short account id
+   - If there is no account number at all: leave both account fields null
 7. Document title (Topic) - short descriptive topic that adds meaning beyond document type:
    - Prefer 2–4 words; this becomes the "topic" part of the filename when more specific than type alone
+     (when set, it replaces document_type in the filename — e.g. "Barn" not "Barn Statement")
    - ALWAYS extract for: government notices, legal documents, tax forms, certificates, permits,
      contracts, policies, and any non-routine document where the type alone is not descriptive enough
      (e.g., "Tax Delinquent", "W-2", "Lease", "Birth Certificate", "EOB", "Privacy Notice", "Building Permit")
    - Extract for financial docs when a specific named title is prominently displayed
      (e.g., "Auto Policy", "Plan Summary")
-   - Use null for routine invoices, bills, receipts, itineraries, and standard bank/credit card statements
-     where Vendor + document type is already fully descriptive
+   - Utility / telecom / multi-premise service bills (electric, gas, water, internet, etc.):
+     * ALWAYS extract a short service-location or premise label when the "SERVICE FOR" / service
+       address has a distinctive qualifier beyond the street number and street name
+     * Examples (take only the qualifier, title case):
+       - "130 WEST ST BARN" → "Barn"
+       - "130 WEST ST, **COGEN**" → "Cogen"
+       - "45 Main St Apt 2B" → "Apt 2B"
+       - "Unit B / Garage / Pool house" style site labels → that short label
+     * Do NOT use the full street address, city, customer name, or account number as the title
+     * If no distinctive location/premise label exists, leave document_title null
+       (filename will fall back to document type, e.g. "Statement")
+     * Be consistent: the same kind of label on any utility bill for the same vendor should be extracted
+   - Use null for routine single-account invoices, receipts, itineraries, and standard bank/credit card
+     statements where Vendor + document type is already fully descriptive (utilities with a premise
+     label are the exception above)
    - Do NOT set a title that only restates the document type with a filler word
      (e.g. null not "Travel Itinerary" when type is "Itinerary"; null not "Invoice Document")
    - Do NOT repeat words already in the business/vendor name
    - If the document covers multiple related items, synthesize a short title (e.g., "Auto Property Insurance")
-   - If an original filename hint is provided, use it only as a starting point and verify against the document
+   - If an original filename hint is provided, use it only as a starting point and verify against the document;
+     never invent a location title from the filename alone if it is not on the document
    - Limit to 5 words maximum; use title case; prefer short forms
 8. USDF Dressage test scorecard fields (only for USDF/United States Dressage Federation scorecards):
    - If this document is a USDF dressage test scorecard, set document_type to "Test" and extract:
@@ -589,14 +606,17 @@ def _validate_invoice_data(parsed_info):
     """Validate and log warnings for invoice data"""
     logger = logging.getLogger(__name__)
 
-    # Log a warning if we have partial bank statement info (one field but not the other)
-    # Exception: Portfolio statements don't need account_last_4
+    # Warn when account_type is present without an id (incomplete bank/CC pair).
+    # last4 without type is fine (utility bills, etc.). Portfolio never needs last4.
     has_account_type = parsed_info.get('account_type') is not None
     has_account_last_4 = parsed_info.get('account_last_4') is not None
     account_type_value = parsed_info.get('account_type')
     is_portfolio = account_type_value and account_type_value.lower() == 'portfolio'
-    if has_account_type != has_account_last_4 and not is_portfolio:
-        logger.warning(f"Partial bank statement data: account_type={parsed_info.get('account_type')}, account_last_4={parsed_info.get('account_last_4')}")
+    if has_account_type and not has_account_last_4 and not is_portfolio:
+        logger.warning(
+            f"Partial bank statement data: account_type={parsed_info.get('account_type')}, "
+            f"account_last_4={parsed_info.get('account_last_4')}"
+        )
 
     # Validate that document_type was provided
     if not parsed_info.get('document_type'):
@@ -1015,26 +1035,33 @@ def _build_filename_parts(fields, file_ext):
     display_type = _select_display_topic(business_name, document_type, document_title)
 
     # Format: Business Name [Account-Type] Display-Type [Last4] [- Patient/Animal] [Invoice#] Date
-    # For bank-related/credit card documents, insert account type before document type
-    should_include_account = (account_type and account_last_4 and
-                              account_type.lower() not in ['life insurance', 'annuity', 'vul'])
+    # Account type is optional: utility/telecom statements often have last4 with no bank-style type.
+    excluded_account_types = {'life insurance', 'annuity', 'vul'}
+    include_account_type = bool(
+        account_type and account_type.lower() not in excluded_account_types
+    )
+    is_portfolio = include_account_type and account_type.lower() == 'portfolio'
 
-    if should_include_account:
-        if account_type.lower() == 'portfolio':
-            # Portfolio statement
-            filename_parts = [business_name, account_type, display_type]
-        else:
-            # Single account with type and last 4 digits
-            filename_parts = [business_name, account_type, display_type, account_last_4]
+    if is_portfolio:
+        # Multi-account portfolio: type only, no last-4
+        filename_parts = [business_name, account_type, display_type]
+    elif include_account_type and account_last_4:
+        # Bank/CC style: type + last 4
+        filename_parts = [business_name, account_type, display_type, account_last_4]
+    elif account_last_4:
+        # Utility etc.: last-4 without a typed account category
+        filename_parts = [business_name, display_type, account_last_4]
+    elif include_account_type:
+        filename_parts = [business_name, account_type, display_type]
     else:
         filename_parts = [business_name, display_type]
 
     if patient_animal_name:
         filename_parts.append(f"- {patient_animal_name}")
 
-    # Include short invoice/doc id when we don't already have account info
-    # (statements typically use account identifier instead of invoice numbers)
-    if invoice_number and not account_type:
+    # Include short invoice/doc id when we don't already have an account identifier
+    # (statements typically use account last-4 instead of invoice numbers)
+    if invoice_number and not account_last_4:
         filename_parts.append(invoice_number)
 
     # Only include date if it's valid (not 00000000)

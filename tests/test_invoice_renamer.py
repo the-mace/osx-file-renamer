@@ -581,6 +581,9 @@ class TestRenameInvoiceConversion:
         assert _select_display_topic('IRS', 'Notice', 'Tax Delinquent Notice') == 'Tax Delinquent'
         assert _select_display_topic('Acme Insurance', 'Notice', 'Automobile Policy Packet') == 'Automobile Policy Packet'
         assert _select_display_topic('Bank', 'Statement', None) == 'Statement'
+        # Utility premise labels replace Statement (not "Barn Statement")
+        assert _select_display_topic('National Grid', 'Statement', 'Barn') == 'Barn'
+        assert _select_display_topic('National Grid', 'Statement', 'Cogen') == 'Cogen'
 
         fields = {
             'business_name': 'Alaska Cruise',

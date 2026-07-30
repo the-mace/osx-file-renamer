@@ -89,7 +89,7 @@ class TestRenameInvoiceBasic:
 
     @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_portfolio_statement(self, mock_extract, tmp_path):
-        """Test portfolio statement (account_last_4=None means account info not included)."""
+        """Portfolio statements include type without requiring last-4."""
         test_file = tmp_path / "portfolio.pdf"
         test_file.write_text("test content")
 
@@ -100,16 +100,14 @@ class TestRenameInvoiceBasic:
             'invoice_number': None,
             'patient_animal_name': None,
             'account_type': 'Portfolio',
-            'account_last_4': None  # None means should_include_account is False
+            'account_last_4': None
         }
         mock_extract.return_value = info
 
         result = rename_invoice(str(test_file))
 
         assert result is True
-        # Since account_last_4 is None, account info is not included
-        # Expected: "Vanguard Statement 20240331.pdf"
-        expected_name = "Vanguard Statement 20240331.pdf"
+        expected_name = "Vanguard Portfolio Statement 20240331.pdf"
         assert (tmp_path / expected_name).exists()
 
     @patch('invoice_renamer.extract_invoice_info')

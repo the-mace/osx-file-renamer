@@ -130,6 +130,109 @@ class TestRenameInvoiceDocumentTypeSanitization:
         expected = tmp_path / "Fidelity Rollover IRA Report 9876 20260131.pdf"
         assert expected.exists()
 
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_account_last4_without_type(self, mock_extract, tmp_path):
+        """Utility-style statements include last-4 even with no bank account type."""
+        test_file = tmp_path / "test.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'National Grid',
+            'document_type': 'Statement',
+            'invoice_date': '2026-07-29',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '1007',
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "National Grid Statement 1007 20260729.pdf"
+        assert expected.exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_utility_location_title_with_account(
+        self, mock_extract, tmp_path
+    ):
+        """Utility multi-premise: location topic replaces Statement; keep last-4."""
+        test_file = tmp_path / "barn.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'National Grid',
+            'document_type': 'Statement',
+            'document_title': 'Barn',
+            'invoice_date': '2026-07-29',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '5018',
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        # Preferred pattern: Vendor Location AccountId Date (not "Barn Statement")
+        expected = tmp_path / "National Grid Barn 5018 20260729.pdf"
+        assert expected.exists()
+        assert not (tmp_path / "National Grid Barn Statement 5018 20260729.pdf").exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_utility_cogen_location_parallel_naming(
+        self, mock_extract, tmp_path
+    ):
+        """Second utility premise uses same location+last4 pattern (not plain Statement)."""
+        test_file = tmp_path / "cogen.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'National Grid',
+            'document_type': 'Statement',
+            'document_title': 'Cogen',
+            'invoice_date': '2026-07-29',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '1007',
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "National Grid Cogen 1007 20260729.pdf"
+        assert expected.exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_account_last4_without_type_skips_invoice_number(
+        self, mock_extract, tmp_path
+    ):
+        """When last-4 is present, do not also append invoice number."""
+        test_file = tmp_path / "test.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'National Grid',
+            'document_type': 'Statement',
+            'invoice_date': '2026-07-29',
+            'invoice_number': '9999',
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '5018',
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "National Grid Statement 5018 20260729.pdf"
+        assert expected.exists()
+        assert not (tmp_path / "National Grid Statement 5018 9999 20260729.pdf").exists()
+
 
 class TestRenameInvoiceAccountNumberValidation:
     """Test account number validation and cleanup."""
