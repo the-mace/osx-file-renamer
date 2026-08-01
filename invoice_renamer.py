@@ -31,149 +31,91 @@ CONVERTIBLE_IMAGE_EXTENSIONS = ['.heic', '.jpg', '.jpeg', '.png', '.webp', '.tif
 CONVERTIBLE_DOC_EXTENSIONS = ['.docx']
 CONVERTIBLE_EXTENSIONS = CONVERTIBLE_IMAGE_EXTENSIONS + CONVERTIBLE_DOC_EXTENSIONS
 
-# LLM prompt for extracting invoice metadata
-# Priority for filenames: short Vendor → Topic → short AccountId → Date (low PII, concise)
-INVOICE_EXTRACTION_PROMPT = """Extract the following information from this document.
-Priority fields for the filename (in order): Vendor, Topic, Account identifier, Date.
-Keep names SHORT — filenames should be concise and recognizable, not legal full names.
+# ---------------------------------------------------------------------------
+# Naming contract
+#
+# LLM extracts FACTS only. Python owns the filename grammar (see
+# _select_display_topic / _build_filename_parts). Do not teach assembly rules
+# in the prompt beyond "return these fields."
+#
+# Grammar:
+#   Vendor [AccountType] Topic [AccountId] [- Party] [RefId] Date.ext
+#
+# Topic is produced from (document_type, document_title/qualifier):
+#   - no qualifier → document_type
+#   - Confirmation/Certificate/Permit + qualifier → "{qualifier} {type}"
+#   - otherwise qualifier replaces type (after stripping redundant type/vendor words)
+#
+# document_title JSON key = optional short QUALIFIER (premise, subtype, form name).
+# ---------------------------------------------------------------------------
 
-1. Business name (Vendor) - SHORT recognizable brand, not the full legal entity:
-   - Prefer common short forms: "Amex" not "American Express"; "BofA" not "Bank of America";
-     "Chase" not "JPMorgan Chase Bank, N.A."; "WF" is OK for Wells Fargo if space is tight, else "Wells Fargo"
-   - Financial: brand the customer recognizes (issuing bank for CC statements, NOT the card product name)
-     * Store credit cards: store name ("Target", "Best Buy") rather than backing bank
-     * Co-branded cards: co-brand when prominent ("JetBlue", "Delta") over issuing bank
-     * Subsidiaries: parent if more recognizable ("Tesla" not "Blue Skies Solar II, LLC")
-     * Subscriptions: service name ("Netflix", "Spotify")
-     * Banks: short bank name ("USAA", "Chase", "Citi")
-   - Government / institutional: specific short agency name ("IRS", "SSA", "Medicare", "USPS",
-     "NJ DMV", "Tewksbury Township")
-   - Healthcare / education / other: practice, school, HOA, employer — short form
-   - When in doubt, use the most prominent short name at the top of the document
-   - Limit to about 3–4 words maximum
-2. Document type (REQUIRED - use ONE word to classify):
-   - "Invoice" - bills, invoices requesting payment
-   - "Quote" - quotes, estimates, proposals, bids not yet requesting payment
-   - "Statement" - bank/credit card/account statements, insurance/annuity statements
-   - "Receipt" - proof of payment, transaction receipts (NOT trade confirmations)
-   - "Confirmation" - trade confirmations, order confirmations, booking confirmations
-   - "Notice" - formal notifications, legal notices, policy change notices, government notices
-   - "Letter" - general correspondence, cover letters, personal letters
-   - "Report" - reports and summaries (only if document explicitly says "report")
-   - "Form" - tax forms, government forms, applications, enrollment forms (W-2, 1099, I-9, etc.)
-   - "Contract" - agreements, leases, service contracts, NDAs, terms of service
-   - "Policy" - insurance policies, privacy policies, employee handbooks
-   - "Certificate" - certificates of completion, warranties, birth/marriage certificates, titles
-   - "Permit" - building permits, parking permits, licenses
-   - "Map" - property maps, site plans, layout diagrams
-   - IMPORTANT: If the document contains the word "statement" prominently,
-     classify it as "Statement" not "Report"
-   - Choose the most specific type that applies
-3. Invoice/statement date (REQUIRED - look carefully; page 1 may be a cover — check content pages too):
-   - For receipts: Look for the transaction date/time near the top (may be labeled "Date", in the header row, or near business info)
-   - For invoices/statements: Look for "Invoice Date", "Statement Date", "Bill Date", "Date", etc.
-   - For notices/letters/forms: Look for the date at the top of the document or the tax/form year
-   - Common formats: MM/DD/YY, MM/DD/YYYY, YYYY-MM-DD, Month DD, YYYY
-   - IMPORTANT: Always extract a date if one is visible - documents almost always have dates
-   - Return in YYYY-MM-DD format
-4. Invoice number (if available) - short reference only, not full account numbers:
-   - Look for "Invoice #", "Invoice No.", "Bill #", "Reference #", "Case #", "Permit #", etc.
-   - Alphanumeric IDs are fine (e.g., "ACS12B4", "INV88421") if short
-   - Leave null if no clear document number is present; never put a full account/card number here
-5. Patient or animal name (only for medical/veterinary documents):
-   - For medical invoices/records: Extract the patient's name if clearly identified
-   - For veterinary invoices: Look carefully for animal/pet names in:
-     * "Animal:" field or column
-     * "Pet Name:" field
-     * "Patient:" field (in vet contexts)
-     * Table columns labeled "Animal", "Pet", or "Patient"
-     * Any clearly identified animal/pet name in the document
-   - For other document types: leave this null
-6. Account details (for bank statements, credit card statements, notices, and letters):
-   - Account type: Look for the SPECIFIC account type category (not generic or product names):
-     * Bank accounts: "Checking", "Savings", "Money Market", "CD", "IRA"
-     * Credit cards: "Credit Card" (or specific tier like "Platinum", "Gold" if clearly labeled as such)
-     * Insurance/Investment accounts: Use specific types like "Annuity", "VUL", "Life Insurance", "Brokerage", "401k" (NOT generic terms like "Investment Account" or "Account")
-     * If only generic "Account" or "Investment Account" is found, leave this null
-   - Account identifier (account_last_4): SHORT id for filenames — low PII
-     * Prefer last 4 digits of account/card (xxxx1234, ending in 1234, "2-51000" → "1000")
-     * Short alphanumeric refs OK (e.g. "A12B") — never full account/card numbers
-     * Also extract for utility, telecom, and other billed service accounts even when
-       there is no bank-style account_type (leave account_type null; still set account_last_4)
-   - Extract these even from notices/letters if they reference a specific account
-   - IMPORTANT: If this is a portfolio summary or overview showing MULTIPLE accounts (2 or more different account numbers):
-     * Set account_type to "Portfolio"
-     * Set account_last_4 to null
-   - For single account documents: extract the specific account type (when known) and short account id
-   - If there is no account number at all: leave both account fields null
-7. Document title (Topic) - short descriptive topic that adds meaning beyond document type:
-   - Prefer 2–4 words; this becomes the "topic" part of the filename when more specific than type alone
-     (when set, it replaces document_type in the filename — e.g. "Barn" not "Barn Statement")
-   - ALWAYS extract for: government notices, legal documents, tax forms, certificates, permits,
-     contracts, policies, and any non-routine document where the type alone is not descriptive enough
-     (e.g., "Tax Delinquent", "W-2", "Lease", "Birth Certificate", "EOB", "Privacy Notice", "Building Permit")
-   - Extract for financial docs when a specific named title is prominently displayed
-     (e.g., "Auto Policy", "Plan Summary")
-   - Utility / telecom / multi-premise service bills (electric, gas, water, internet, etc.):
-     * ALWAYS extract a short service-location or premise label when the "SERVICE FOR" / service
-       address has a distinctive qualifier beyond the street number and street name
-     * Examples (take only the qualifier, title case):
-       - "130 WEST ST BARN" → "Barn"
-       - "130 WEST ST, **COGEN**" → "Cogen"
-       - "45 Main St Apt 2B" → "Apt 2B"
-       - "Unit B / Garage / Pool house" style site labels → that short label
-     * Do NOT use the full street address, city, customer name, or account number as the title
-     * If no distinctive location/premise label exists, leave document_title null
-       (filename will fall back to document type, e.g. "Statement")
-     * Be consistent: the same kind of label on any utility bill for the same vendor should be extracted
-   - Use null for routine single-account invoices, receipts, itineraries, and standard bank/credit card
-     statements where Vendor + document type is already fully descriptive (utilities with a premise
-     label are the exception above)
-   - Do NOT set a title that only restates the document type with a filler word
-     (e.g. null not "Travel Itinerary" when type is "Itinerary"; null not "Invoice Document")
-   - Do NOT repeat words already in the business/vendor name
-   - If the document covers multiple related items, synthesize a short title (e.g., "Auto Property Insurance")
-   - If an original filename hint is provided, use it only as a starting point and verify against the document;
-     never invent a location title from the filename alone if it is not on the document
-   - Limit to 5 words maximum; use title case; prefer short forms
-8. USDF Dressage test scorecard fields (only for USDF/United States Dressage Federation scorecards):
-   - If this document is a USDF dressage test scorecard, set document_type to "Test" and extract:
-     * usdf_test_name: Abbreviated test name — ALWAYS omit the word "Level", use title case:
-       - "2023 USDF INTRODUCTORY LEVEL – TEST A" → "USDF Introductory A"
-       - "2023 USEF TRAINING LEVEL TEST 1" → "USDF Training 1"
-       - "2023 USEF FIRST LEVEL TEST 1" → "USDF First 1"
-       - "2023 USEF SECOND LEVEL TEST 2" → "USDF Second 2"
-       - "2023 USEF THIRD LEVEL TEST 3" → "USDF Third 3"
-       - "USDF PRIX ST. GEORGES" → "USDF Prix St Georges"
-       - CRITICAL: Never include the word "Level" in usdf_test_name
-     * usdf_rider_number: Competitor/entry number — REQUIRED, always present on scorecards
-       - Page 1: look for a box labeled "ENTRY NO." or "NO." at the top right of the sheet
-       - Page 2: the front cover appears ROTATED 90°; look sideways for:
-         * "Entry No." or "No." field
-         * "Name and Number of Horse" field — the entry number is BEFORE the horse name
-           (e.g. "16 Fiddy" → entry number is "16", horse name is "Fiddy")
-       - Extract just the digits (e.g., "16", "28", "70", "99", "22")
-     * usdf_rider_name: Rider's full name — REQUIRED
-       - Labeled "Name of Rider" on the rotated test cover visible in the lower portion of page 2
-       - Not the horse name (horse name is separate)
-   - For non-USDF documents: set all three fields to null
+# Fact-extraction prompt — keep short; assembly policy lives in code.
+INVOICE_EXTRACTION_PROMPT = """Extract facts from this document as JSON. Do NOT invent a filename — code builds it from these fields.
+Priority facts: short Vendor, Type, short Account id, Date. Keep values SHORT and recognizable.
 
-Return the response in this exact JSON format:
+1. business_name — short brand, not legal entity (max ~3–4 words):
+   Amex not American Express; BofA not Bank of America; Chase not JPMorgan Chase Bank N.A.
+   Store cards → store name; co-brand when prominent (JetBlue); parent if more recognizable (Tesla).
+   Government: IRS, SSA, Medicare, USPS, NJ DMV, township name. Else top-of-page short name.
+
+2. document_type — REQUIRED, exactly ONE of:
+   Invoice | Quote | Statement | Receipt | Confirmation | Notice | Letter | Report |
+   Form | Contract | Policy | Certificate | Permit | Map | Itinerary | Test
+   - Statement if "statement" is prominent (not Report)
+   - Confirmation for trade/order/booking confirmations (not Receipt)
+   - Receipt for proof of payment / "payment received"
+   - Quote for estimates/proposals not yet requesting payment
+   - Report only if the document explicitly says report
+
+3. invoice_date — YYYY-MM-DD when visible (check content pages, not only cover).
+   Receipts: transaction date. Invoices/statements: invoice/statement/bill date.
+   Notices/forms: header date or tax/form year. Always extract if visible.
+
+4. invoice_number — short doc ref only (Invoice #, Bill #, Case #, Permit #). null if none.
+   Never full account/card numbers.
+
+5. patient_animal_name — medical patient or vet pet name only; else null.
+
+6. account_type — specific category when known, else null:
+   Checking, Savings, Money Market, CD, IRA, Credit Card (or Platinum/Gold if labeled as tier),
+   Annuity, VUL, Life Insurance, Brokerage, 401k.
+   Multi-account overview (2+ different account numbers) → "Portfolio".
+   null for generic "Account" / "Investment Account" only.
+
+7. account_last_4 — last 4 digits or short alphanumeric id for a SINGLE account/card
+   (also utility/telecom service accounts even when account_type is null).
+   Portfolio or no account → null. Never full account numbers.
+
+8. document_title — optional SHORT qualifier (not a full filename). Use when it adds meaning beyond type:
+   - Confirmation subtype: Trade, Order, Booking, Reservation
+   - Utility/telecom premise label only (not street address): "130 WEST ST BARN" → "Barn";
+     "… **COGEN**" → "Cogen"; "Apt 2B" / Unit B / Garage → that short label
+   - Non-routine subject: Tax Delinquent, W-2, Lease, EOB, Building Permit, Auto Policy
+   - Multi-item summary: short synthesis (e.g. Auto Property Insurance)
+   null when Vendor + type is enough (routine invoice, receipt, itinerary, plain bank/CC statement).
+   Do not restate the type ("Invoice Document", "Travel Itinerary" → null). Max 5 words, title case.
+   Do not repeat vendor words. Do not invent a premise label that is not on the document.
+
+9. USDF dressage scorecards only (else all three null). Set document_type to "Test":
+   - usdf_test_name: omit the word "Level" — e.g. "USDF Introductory A", "USDF Training 1",
+     "USDF First 1", "USDF Prix St Georges"
+   - usdf_rider_number: entry/competitor digits only (Entry No. / number before horse name)
+   - usdf_rider_name: rider full name (not horse)
+
+Return ONLY this JSON (null for anything missing):
 {
-  "business_name": "Short Vendor Name",
-  "document_type": "Type Here",
-  "document_title": "Short Topic or null",
+  "business_name": "Short Vendor",
+  "document_type": "Type",
+  "document_title": "Qualifier or null",
   "invoice_date": "YYYY-MM-DD",
   "invoice_number": "Short Id or null",
-  "patient_animal_name": "Name Here or null",
-  "account_type": "Account Type Here or null",
-  "account_last_4": "Last4 or short id or null",
-  "usdf_test_name": "USDF Introductory A or null",
-  "usdf_rider_number": "Competitor number or null",
-  "usdf_rider_name": "Rider full name or null"
-}
-
-If you cannot find any piece of information, use null for that field."""
+  "patient_animal_name": "Name or null",
+  "account_type": "Type or null",
+  "account_last_4": "Last4 or null",
+  "usdf_test_name": null,
+  "usdf_rider_number": null,
+  "usdf_rider_name": null
+}"""
 
 # Short-name abbreviations applied after extraction (case-insensitive whole-phrase match)
 FILENAME_ABBREVIATIONS = [
@@ -192,22 +134,83 @@ MAX_ACCOUNT_ID_LEN = 8  # longer ids look like full account numbers — trim to 
 
 # Original filenames that are camera/scanner defaults or bare numbers carry no useful signal
 GENERIC_FILENAME_PATTERNS = [
-    r'^(img|image|photo|pic|scan|doc|document|file|untitled|screenshot|dsc)\s*\d*$',
+    r'^(img|image|photo|pic|scan|doc|document|file|untitled|screenshot|dsc|test|temp|tmp|sample|example|output)\s*\d*$',
     r'^\d+$',
 ]
+# Noise tokens stripped from filename hints (not useful as topic words)
+_FILENAME_NOISE_WORDS = frozenset({
+    'file', 'pdf', 'jpg', 'jpeg', 'png', 'heic', 'download', 'downloads', 'copy', 'final',
+    'new', 'img', 'image', 'photo', 'pic', 'scan', 'doc', 'document', 'untitled', 'screenshot',
+    'dsc', 'edited', 'export', 'attachment', 'attachments', 'test', 'temp', 'tmp', 'sample',
+    'example', 'output',
+})
+# Account/product words often present in names; not document topics by themselves
+_FILENAME_ACCOUNT_WORDS = frozenset({
+    'cc', 'credit', 'card', 'checking', 'savings', 'brokerage', 'margin', 'ira', 'roth',
+    'portfolio', '401k', 'hsa', 'fsa', 'cash', 'money', 'market', 'cd',
+})
+# Words that name a document *kind* (or near-synonyms). Never promote these into document_title
+# from a filename — they either restate document_type or conflict with content-based type
+# (e.g. "Quest Billing" when the PDF is a payment Receipt → keep type Receipt, not title Billing).
+# Confirmation subtypes (Trade, Order, Booking, Reservation) are intentionally NOT listed here.
+_FILENAME_TYPE_SYNONYMS = frozenset({
+    'billing', 'bill', 'bills', 'invoice', 'invoices', 'receipt', 'receipts', 'statement',
+    'statements', 'notice', 'notices', 'letter', 'letters', 'report', 'reports', 'form',
+    'forms', 'contract', 'contracts', 'policy', 'policies', 'certificate', 'certificates',
+    'permit', 'permits', 'quote', 'quotes', 'estimate', 'estimates', 'itinerary', 'map',
+    'maps', 'payment', 'payments', 'paid', 'remittance', 'remit', 'stub', 'summary',
+    'document', 'documents', 'file', 'scan', 'copy',
+})
+# Filler words that don't add meaning if they are all that remains of a title
+_GENERIC_TITLE_WORDS = frozenset({
+    'travel', 'document', 'documents', 'general', 'official', 'the', 'a', 'an',
+    'and', 'of', 'for', 'to', 'in', 'at', 'by', 'with', 'from', 'on',
+})
+
+
+def _split_filename_tokens(name):
+    """Split camelCase / digit boundaries so glued names become readable words.
+
+    Examples:
+      TradeConfirmation07312026 → Trade Confirmation 07312026
+      Amex_CC_Statement → Amex CC Statement
+    """
+    name = re.sub(r'[_\-.\+]+', ' ', name)
+    # lower→Upper boundary (TradeConfirmation)
+    name = re.sub(r'([a-z])([A-Z])', r'\1 \2', name)
+    # ACRONYM then Capitalized word (HTMLParser → HTML Parser)
+    name = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1 \2', name)
+    # letter↔digit boundaries (Confirmation0731, 2024Invoice)
+    name = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', name)
+    name = re.sub(r'(\d)([a-zA-Z])', r'\1 \2', name)
+    return re.sub(r'\s+', ' ', name).strip()
+
+
+def _strip_filename_date_tokens(name):
+    """Remove leading/trailing date-like tokens commonly baked into downloads."""
+    # Leading ISO / compact dates (Shortcuts, mail clients)
+    name = re.sub(r'^\d{4}[-_]\d{2}[-_]\d{2}[_\-\s]*', '', name)
+    name = re.sub(r'^\d{8}[_\-\s]*', '', name)
+    # Trailing compact dates: MMDDYYYY, YYYYMMDD, MMDDYY, YYYYMMDD-ish 6–8 digits
+    name = re.sub(r'[\s_\-]*\d{8}$', '', name)
+    name = re.sub(r'[\s_\-]*\d{6}$', '', name)
+    # Trailing ISO date
+    name = re.sub(r'[\s_\-]*\d{4}[-_]\d{2}[-_]\d{2}$', '', name)
+    return name.strip()
 
 
 def _original_filename_hint(file_path):
     """Build a human-readable hint from the original filename, or None if it's not useful.
 
-    Strips leading date prefixes (often added by Shortcuts/automations) and separators,
-    then filters out generic camera/scanner names that wouldn't help the LLM.
+    Strips date prefixes/suffixes (often added by Shortcuts/automations), splits camelCase
+    and digit boundaries, then filters out generic camera/scanner names.
     """
     name = os.path.splitext(os.path.basename(file_path))[0]
-    name = re.sub(r'^\d{4}[-_]\d{2}[-_]\d{2}[_\-\s]*', '', name)
-    name = re.sub(r'^\d{8}[_\-\s]*', '', name)
-    name = re.sub(r'[_\-]+', ' ', name).strip()
-    name = re.sub(r'\s+', ' ', name)
+    name = _strip_filename_date_tokens(name)
+    name = _split_filename_tokens(name)
+    # Date tokens may reappear after camelCase/digit splits (e.g. TradeConfirmation07312026)
+    name = _strip_filename_date_tokens(name)
+    name = re.sub(r'\s+', ' ', name).strip()
     if not name or len(name) < 4:
         return None
     for pattern in GENERIC_FILENAME_PATTERNS:
@@ -217,17 +220,125 @@ def _original_filename_hint(file_path):
 
 
 def _build_extraction_prompt(filename_hint=None):
-    """Build the invoice extraction prompt, optionally including the original filename as a hint"""
+    """Build the extraction prompt; optionally note the original filename as a weak signal."""
     if not filename_hint:
         return INVOICE_EXTRACTION_PROMPT
     hint_block = (
-        f'The file\'s original name (before renaming) was "{filename_hint}". This may hint at the '
-        'business, document type, or specific content (e.g. multiple items covered by one '
-        'statement), but it can also be generic, wrong, or incomplete — verify everything against '
-        'the actual document and use it only to sharpen field 7 (document title) or catch details '
-        'you might otherwise miss.\n\n'
+        f'The file\'s original name was "{filename_hint}". '
+        'Use it as a weak signal for vendor, type, or document_title when consistent with content '
+        '(e.g. "Trade Confirmation" → type Confirmation, document_title Trade). '
+        'Content wins on conflict (page says payment received → Receipt even if named Billing). '
+        'Do not invent a premise/location label from the filename alone.\n\n'
     )
     return hint_block + INVOICE_EXTRACTION_PROMPT
+
+
+def _raw_qualifier(info):
+    """Return the optional qualifier from model output (document_title, or alias qualifier)."""
+    if not info:
+        return None
+    for key in ('document_title', 'qualifier'):
+        val = info.get(key)
+        if val is None:
+            continue
+        text = str(val).strip()
+        if text and text.lower() != 'null':
+            return text
+    return None
+
+
+def _topic_words_from_filename_hint(filename_hint, business_name=None, document_type=None):
+    """Extract distinctive qualifier words from a filename hint.
+
+    Drops vendor words, document-type words/synonyms, account labels, dates/numbers, and noise.
+    Returns a title-cased string or None if nothing useful remains.
+    """
+    if not filename_hint:
+        return None
+    # Re-normalize in case a raw basename was passed
+    words = _split_filename_tokens(_strip_filename_date_tokens(filename_hint)).split()
+    if not words:
+        return None
+
+    drop = (
+        set(_FILENAME_NOISE_WORDS)
+        | set(_GENERIC_TITLE_WORDS)
+        | set(_FILENAME_ACCOUNT_WORDS)
+        | set(_FILENAME_TYPE_SYNONYMS)
+    )
+    if business_name:
+        drop |= {w.lower() for w in str(business_name).split() if w}
+    if document_type:
+        drop |= {w.lower() for w in str(document_type).split() if w}
+
+    kept = []
+    for word in words:
+        lower = word.lower()
+        if lower in drop:
+            continue
+        if re.fullmatch(r'\d+', word):
+            continue
+        if re.fullmatch(r'\d{4}[-_]\d{2}[-_]\d{2}', word):
+            continue
+        # Skip tiny tokens (e.g. leftover "CC" after account-word filtering edge cases)
+        if len(re.sub(r'[^a-zA-Z0-9]', '', word)) < 3:
+            continue
+        kept.append(word)
+
+    if not kept:
+        return None
+    # Cap length; title-case for consistency with LLM titles
+    topic = ' '.join(kept[:5])
+    try:
+        topic = titlecase(topic)
+    except Exception:
+        topic = topic.title()
+    return topic if topic else None
+
+
+def _apply_filename_hint_fallback(info, filename_hint):
+    """Fill missing qualifier from the original filename when the LLM left it null.
+
+    Safety net only — code assembly owns how the qualifier becomes the Topic segment.
+    Never overwrites a model-provided document_title/qualifier.
+
+    Does NOT promote type-synonym leftovers like "Billing" when the model already classified
+    the file as Receipt — content wins over a wrong/outdated name.
+
+    To avoid treating bare fixture/placeholder names (original.pdf, nodoc.pdf) as topics,
+    require either:
+      - the document type appears in the filename (Trade Confirmation → Confirmation), or
+      - the hint is multi-word after normalization (Tax Delinquent, Order Confirmation)
+    and then at least one distinctive topic word remains after stripping vendor/type/noise.
+    """
+    if not info or not filename_hint:
+        return info
+    if _raw_qualifier(info):
+        return info
+
+    hint_norm = _split_filename_tokens(_strip_filename_date_tokens(filename_hint))
+    hint_words = [w for w in hint_norm.split() if w]
+    if not hint_words:
+        return info
+
+    type_words = {w.lower() for w in str(info.get('document_type') or '').split() if w}
+    hint_lower = {w.lower() for w in hint_words}
+    has_type_signal = bool(type_words & hint_lower)
+    is_multiword = len(hint_words) >= 2
+    if not has_type_signal and not is_multiword:
+        return info
+
+    topic = _topic_words_from_filename_hint(
+        filename_hint,
+        business_name=info.get('business_name'),
+        document_type=info.get('document_type'),
+    )
+    if topic:
+        info['document_title'] = topic
+        logging.getLogger(__name__).info(
+            f"Filled document_title from filename hint: {topic!r} (hint={filename_hint!r})"
+        )
+    return info
 
 
 def send_notification(title, message):
@@ -900,7 +1011,8 @@ def _clean_and_validate_fields(info):
     """Clean and validate individual fields from invoice info"""
     business_name = clean_filename(info.get('business_name'), limit_words=4)
     document_type = clean_filename(info.get('document_type')) if info.get('document_type') else 'Document'
-    document_title = clean_filename(info.get('document_title'), limit_words=5) if info.get('document_title') else None
+    raw_title = _raw_qualifier(info)
+    document_title = clean_filename(raw_title, limit_words=5) if raw_title else None
     invoice_date = format_date(info.get('invoice_date'))
 
     # Process invoice number (short alphanumeric OK; long digit strings trimmed)
@@ -943,20 +1055,33 @@ def _clean_and_validate_fields(info):
     }
 
 
-# Filler words that don't add meaning if they are all that remains of a title
-_GENERIC_TITLE_WORDS = frozenset({
-    'travel', 'document', 'documents', 'general', 'official', 'the', 'a', 'an',
-    'and', 'of', 'for', 'to', 'in', 'at', 'by', 'with', 'from', 'on',
+# Assembly policy: types where qualifier is a subtype that keeps the type word
+# ("Trade" + Confirmation → "Trade Confirmation"). All other types use qualifier
+# as the full Topic segment (e.g. premise "Barn" replaces Statement).
+_TYPES_KEEP_SUBTYPE_WITH_TYPE = frozenset({
+    'confirmation', 'certificate', 'permit',
+})
+# Account categories that are not useful as a middle filename token
+_EXCLUDED_ACCOUNT_TYPES = frozenset({
+    'life insurance', 'annuity', 'vul',
 })
 
 
 def _select_display_topic(business_name, document_type, document_title):
-    """Choose a concise topic that does not repeat vendor or document type.
+    """Turn (type, qualifier) into the Topic segment of the filename.
+
+    Policy (owned entirely by code — the LLM only supplies facts):
+      - no qualifier → document_type
+      - qualifier restates type / vendor / filler only → document_type
+      - type in {Confirmation, Certificate, Permit} → "{qualifier} {type}" when type not already in qualifier
+      - otherwise → qualifier alone (replaces type; e.g. utility premise "Barn")
 
     Examples:
       ("Alaska Cruise", "Itinerary", "Travel Itinerary") → "Itinerary"
       ("Acme Insurance", "Policy", "Automobile Policy Packet") → "Automobile Policy Packet"
       ("IRS", "Notice", "Tax Delinquent Notice") → "Tax Delinquent"
+      ("Fidelity", "Confirmation", "Trade") → "Trade Confirmation"
+      ("National Grid", "Statement", "Barn") → "Barn"
     """
     dtype = document_type or 'Document'
     if not document_title:
@@ -997,11 +1122,21 @@ def _select_display_topic(business_name, document_type, document_title):
     if remaining.lower() == dtype_l:
         return dtype
 
+    # Subtype types: keep the head noun so "Trade" stays "Trade Confirmation"
+    remaining_words_l = {w.lower() for w in remaining.split()}
+    type_words_l = {w.lower() for w in type_words}
+    if dtype_l in _TYPES_KEEP_SUBTYPE_WITH_TYPE and not type_words_l.issubset(remaining_words_l):
+        return f"{remaining} {dtype}"
+
     return remaining
 
 
 def _build_filename_parts(fields, file_ext):
-    """Build filename parts from cleaned fields"""
+    """Assemble the final filename from cleaned fields (deterministic naming grammar).
+
+    Grammar: Vendor [AccountType] Topic [AccountId] [- Party] [RefId] Date.ext
+    USDF scorecards use a separate path when usdf_test_name is set.
+    """
     # Always use lowercase extensions (.pdf, .jpg, etc.)
     file_ext = (file_ext or '').lower()
     if file_ext and not file_ext.startswith('.'):
@@ -1018,7 +1153,7 @@ def _build_filename_parts(fields, file_ext):
     usdf_rider_number = fields.get('usdf_rider_number')
     usdf_rider_name = fields.get('usdf_rider_name')
 
-    # USDF dressage test: "<test name> [- <rider number>] [- <rider name>] <date>"
+    # USDF domain pack: "<test name> [- <rider number>] [- <rider name>] <date>"
     if usdf_test_name:
         date_part = f" {invoice_date}" if invoice_date and invoice_date != "00000000" else ""
         if usdf_rider_number and usdf_rider_name:
@@ -1031,40 +1166,35 @@ def _build_filename_parts(fields, file_ext):
             new_filename = f"{usdf_test_name}{date_part}{file_ext}"
         return new_filename, invoice_date
 
-    # Topic without repeating vendor or type (e.g. not "Alaska Cruise Travel Itinerary")
-    display_type = _select_display_topic(business_name, document_type, document_title)
+    display_topic = _select_display_topic(business_name, document_type, document_title)
 
-    # Format: Business Name [Account-Type] Display-Type [Last4] [- Patient/Animal] [Invoice#] Date
-    # Account type is optional: utility/telecom statements often have last4 with no bank-style type.
-    excluded_account_types = {'life insurance', 'annuity', 'vul'}
+    # Account type is optional: utility/telecom often have last4 with no bank-style type.
     include_account_type = bool(
-        account_type and account_type.lower() not in excluded_account_types
+        account_type and account_type.lower() not in _EXCLUDED_ACCOUNT_TYPES
     )
     is_portfolio = include_account_type and account_type.lower() == 'portfolio'
 
     if is_portfolio:
         # Multi-account portfolio: type only, no last-4
-        filename_parts = [business_name, account_type, display_type]
+        filename_parts = [business_name, account_type, display_topic]
     elif include_account_type and account_last_4:
         # Bank/CC style: type + last 4
-        filename_parts = [business_name, account_type, display_type, account_last_4]
+        filename_parts = [business_name, account_type, display_topic, account_last_4]
     elif account_last_4:
         # Utility etc.: last-4 without a typed account category
-        filename_parts = [business_name, display_type, account_last_4]
+        filename_parts = [business_name, display_topic, account_last_4]
     elif include_account_type:
-        filename_parts = [business_name, account_type, display_type]
+        filename_parts = [business_name, account_type, display_topic]
     else:
-        filename_parts = [business_name, display_type]
+        filename_parts = [business_name, display_topic]
 
     if patient_animal_name:
         filename_parts.append(f"- {patient_animal_name}")
 
-    # Include short invoice/doc id when we don't already have an account identifier
-    # (statements typically use account last-4 instead of invoice numbers)
+    # Short invoice/doc id only when we don't already have an account identifier
     if invoice_number and not account_last_4:
         filename_parts.append(invoice_number)
 
-    # Only include date if it's valid (not 00000000)
     if invoice_date and invoice_date != "00000000":
         filename_parts.append(invoice_date)
 
@@ -1260,6 +1390,8 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     # Extract and sanitize information from the (possibly converted) file
     filename_hint = _original_filename_hint(file_path)
     info = extract_invoice_info(processing_file, all_pages=all_pages, filename_hint=filename_hint)
+    # Filename hint safety net — recover qualifier if the model left it null
+    _apply_filename_hint_fallback(info, filename_hint)
     _sanitize_document_fields(info)
     fields = _clean_and_validate_fields(info)
 

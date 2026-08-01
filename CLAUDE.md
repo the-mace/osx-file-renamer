@@ -126,14 +126,16 @@ make lint
 
 4. **Size Management**: Multi-stage compression pipeline (PIL optimization → ImageMagick quality reduction) to meet API limits
 
-5. **Naming Convention**:
+5. **Naming Convention** (LLM = facts; Python = grammar):
 
    ```
-   Vendor [Account-Type] Topic [AccountId] [- Patient/Animal] [Invoice#] Date
+   Vendor [AccountType] Topic [AccountId] [- Party] [RefId] Date.ext
    ```
 
-   Short vendor names preferred (Amex, BofA, Chase). Account id is last-4 or short alphanumeric (low PII).
-   Examples: "Amex CC Statement 1000 20240115.pdf", "Dr Smith Invoice ACS12B4 20240115.pdf"
+   - `document_title` is an optional **qualifier** (premise, subtype, form name), not the full filename
+   - Topic policy is in `_select_display_topic`: subtype types keep `{qualifier} {type}` (e.g. Trade Confirmation); otherwise qualifier replaces type (e.g. Barn)
+   - Short vendors (Amex, BofA, Chase); account id last-4 / short alnum (low PII); lowercase extensions
+   - Original filename is a weak signal + code fallback for missing qualifier — not the primary naming brain
 
 ### API Configuration
 
@@ -187,6 +189,7 @@ If renames still feel slow or vision API cost becomes an issue, consider these i
 - Default pages 1–2 (cover + content) for text and vision
 - Fast non-reasoning default model; vision `detail: low`; JPEG page renders
 - Title/vendor/type dedupe for shorter filenames
+- Slim fact-only extraction prompt; naming grammar owned by code
 
 **Next candidates if still slow or expensive:**
 

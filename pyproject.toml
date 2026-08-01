@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "osx-file-renamer"
-version = "2.5.3"
+version = "2.6.0"
 description = "AI-powered invoice and document file renamer using LLM APIs (Claude, GPT, Grok, Gemini, 100+ others)"
 authors = [
     {name = "Rob"}

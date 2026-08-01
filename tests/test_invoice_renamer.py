@@ -584,6 +584,10 @@ class TestRenameInvoiceConversion:
         # Utility premise labels replace Statement (not "Barn Statement")
         assert _select_display_topic('National Grid', 'Statement', 'Barn') == 'Barn'
         assert _select_display_topic('National Grid', 'Statement', 'Cogen') == 'Cogen'
+        # Trade confirmation keeps both subtype and type (not bare "Trade")
+        assert _select_display_topic('Fidelity', 'Confirmation', 'Trade') == 'Trade Confirmation'
+        assert _select_display_topic('Fidelity', 'Confirmation', 'Trade Confirmation') == 'Trade Confirmation'
+        assert _select_display_topic('Broker', 'Confirmation', 'Order') == 'Order Confirmation'
 
         fields = {
             'business_name': 'Alaska Cruise',
@@ -600,6 +604,235 @@ class TestRenameInvoiceConversion:
         }
         filename, _ = _build_filename_parts(fields, '.pdf')
         assert filename == 'Alaska Cruise Itinerary 20260718.pdf'
+
+    def test_original_filename_hint_splits_camelcase_and_dates(self):
+        """Filename hints should be human-readable (camelCase + date stripped)."""
+        from invoice_renamer import _original_filename_hint
+
+        assert _original_filename_hint('TradeConfirmation07312026.pdf') == 'Trade Confirmation'
+        assert _original_filename_hint('OrderConfirmation.pdf') == 'Order Confirmation'
+        assert _original_filename_hint('Amex_CC_Statement_20240115.pdf') == 'Amex CC Statement'
+        assert _original_filename_hint('2024-01-15_IRS_Tax_Delinquent.pdf') == 'IRS Tax Delinquent'
+        assert _original_filename_hint('IMG_1234.jpg') is None
+        assert _original_filename_hint('scan.pdf') is None
+        assert _original_filename_hint('test.pdf') is None
+
+    def test_filename_hint_fallback_fills_trade_confirmation_title(self):
+        """When LLM leaves title null, recover 'Trade' from TradeConfirmation filename."""
+        from invoice_renamer import (
+            _original_filename_hint,
+            _apply_filename_hint_fallback,
+            _sanitize_document_fields,
+            _clean_and_validate_fields,
+            _build_filename_parts,
+            _topic_words_from_filename_hint,
+        )
+
+        hint = _original_filename_hint('TradeConfirmation07312026.pdf')
+        assert hint == 'Trade Confirmation'
+        assert _topic_words_from_filename_hint(hint, 'Fidelity', 'Confirmation') == 'Trade'
+
+        info = {
+            'business_name': 'Fidelity',
+            'document_type': 'Confirmation',
+            'document_title': None,
+            'invoice_date': '2026-07-31',
+            'invoice_number': '26212-LQYR63',
+            'patient_animal_name': None,
+            'account_type': 'Brokerage',
+            'account_last_4': '9894',
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        _apply_filename_hint_fallback(info, hint)
+        assert info['document_title'] == 'Trade'
+
+        # Does not overwrite an existing title
+        info2 = dict(info)
+        info2['document_title'] = 'Order'
+        _apply_filename_hint_fallback(info2, hint)
+        assert info2['document_title'] == 'Order'
+
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == 'Fidelity Trade Confirmation 20260731.pdf'
+
+    def test_filename_hint_fallback_ignores_conflicting_type_synonyms(self):
+        """Wrong name 'Quest Billing' must not override content-based Receipt type.
+
+        LLM correctly classifies payment-received pages as Receipt with null title;
+        fallback must not promote 'Billing' into the filename.
+        """
+        from invoice_renamer import (
+            _original_filename_hint,
+            _apply_filename_hint_fallback,
+            _topic_words_from_filename_hint,
+            _sanitize_document_fields,
+            _clean_and_validate_fields,
+            _build_filename_parts,
+        )
+
+        hint = _original_filename_hint('Quest Billing.pdf')
+        assert hint == 'Quest Billing'
+        # Billing is a type synonym, not a topic — nothing to promote
+        assert _topic_words_from_filename_hint(hint, 'Quest', 'Receipt') is None
+
+        info = {
+            'business_name': 'Quest',
+            'document_type': 'Receipt',
+            'document_title': None,
+            'invoice_date': '2026-08-01',
+            'invoice_number': '3359769876',
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '7684',
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        _apply_filename_hint_fallback(info, hint)
+        assert info['document_title'] is None
+
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == 'Quest Receipt 20260801.pdf'
+
+    def test_build_extraction_prompt_is_fact_focused(self):
+        """Prompt extracts facts only; filename assembly is owned by code."""
+        from invoice_renamer import _build_extraction_prompt, INVOICE_EXTRACTION_PROMPT
+
+        prompt = _build_extraction_prompt('Trade Confirmation')
+        assert 'Trade Confirmation' in prompt
+        assert 'weak signal' in prompt
+        assert 'Content wins' in prompt
+        # Base prompt: facts + qualifier, not a full naming tutorial
+        base = _build_extraction_prompt(None)
+        assert base == INVOICE_EXTRACTION_PROMPT
+        assert 'document_title' in base
+        assert 'Trade' in base  # confirmation subtype example
+        assert 'Do NOT invent a filename' in base
+        # Assembly rules must not live in the prompt
+        assert 'replaces document_type' not in base
+        assert 'Trade Confirmation …' not in base
+
+    def test_naming_grammar_golden_table(self):
+        """Golden filenames from cleaned fields — assembly policy source of truth."""
+        from invoice_renamer import (
+            _select_display_topic,
+            _clean_and_validate_fields,
+            _sanitize_document_fields,
+            _build_filename_parts,
+        )
+
+        # Topic selection policy
+        cases = [
+            ('Alaska Cruise', 'Itinerary', 'Travel Itinerary', 'Itinerary'),
+            ('IRS', 'Notice', 'Tax Delinquent Notice', 'Tax Delinquent'),
+            ('Fidelity', 'Confirmation', 'Trade', 'Trade Confirmation'),
+            ('National Grid', 'Statement', 'Barn', 'Barn'),
+            ('Bank', 'Statement', None, 'Statement'),
+            ('Acme', 'Certificate', 'Birth', 'Birth Certificate'),
+        ]
+        for vendor, dtype, title, expected in cases:
+            assert _select_display_topic(vendor, dtype, title) == expected, (
+                f'{vendor!r} {dtype!r} {title!r}'
+            )
+
+        # Full assembly examples
+        golden = [
+            (
+                {
+                    'business_name': 'Amex',
+                    'document_type': 'Statement',
+                    'document_title': None,
+                    'invoice_date': '2024-01-15',
+                    'invoice_number': None,
+                    'patient_animal_name': None,
+                    'account_type': 'Credit Card',
+                    'account_last_4': '1000',
+                },
+                'Amex CC Statement 1000 20240115.pdf',
+            ),
+            (
+                {
+                    'business_name': 'National Grid',
+                    'document_type': 'Statement',
+                    'document_title': 'Barn',
+                    'invoice_date': '2026-07-29',
+                    'invoice_number': None,
+                    'patient_animal_name': None,
+                    'account_type': None,
+                    'account_last_4': '5018',
+                },
+                'National Grid Barn 5018 20260729.pdf',
+            ),
+            (
+                {
+                    'business_name': 'Fidelity',
+                    'document_type': 'Confirmation',
+                    'document_title': 'Trade',
+                    'invoice_date': '2026-07-31',
+                    'invoice_number': '26212-LQYR63',
+                    'patient_animal_name': None,
+                    'account_type': 'Brokerage',
+                    'account_last_4': '9894',
+                },
+                'Fidelity Trade Confirmation 20260731.pdf',
+            ),
+            (
+                {
+                    'business_name': 'Quest',
+                    'document_type': 'Receipt',
+                    'document_title': None,
+                    'invoice_date': '2026-08-01',
+                    'invoice_number': '3359769876',  # stripped for Receipt
+                    'patient_animal_name': None,
+                    'account_type': None,
+                    'account_last_4': None,
+                },
+                'Quest Receipt 20260801.pdf',
+            ),
+            (
+                {
+                    'business_name': 'Tesla',
+                    'document_type': 'Statement',
+                    'document_title': None,
+                    'invoice_date': '2023-12-31',
+                    'invoice_number': None,
+                    'patient_animal_name': None,
+                    'account_type': 'Portfolio',
+                    'account_last_4': None,
+                },
+                'Tesla Portfolio Statement 20231231.pdf',
+            ),
+        ]
+        for info, expected in golden:
+            _sanitize_document_fields(info)
+            fields = _clean_and_validate_fields(info)
+            filename, _ = _build_filename_parts(fields, '.pdf')
+            assert filename == expected, f'got {filename!r} expected {expected!r}'
+
+    def test_qualifier_alias_accepted(self):
+        """Accept 'qualifier' as alias for document_title from model output."""
+        from invoice_renamer import _raw_qualifier, _clean_and_validate_fields
+
+        assert _raw_qualifier({'document_title': 'Trade'}) == 'Trade'
+        assert _raw_qualifier({'qualifier': 'Barn', 'document_title': None}) == 'Barn'
+        assert _raw_qualifier({'document_title': 'null'}) is None
+        fields = _clean_and_validate_fields({
+            'business_name': 'Grid',
+            'document_type': 'Statement',
+            'qualifier': 'Cogen',
+            'invoice_date': '2026-01-01',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '1234',
+        })
+        assert fields['document_title'] == 'Cogen'
 
 
 class TestMain:

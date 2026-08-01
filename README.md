@@ -210,30 +210,37 @@ python3 ~/Documents/Code/osx-file-renamer/invoice_renamer.py "$@" --dry-run
 
 ## Naming Convention
 
-Files are renamed using the following format:
+The LLM extracts **facts**; Python builds the filename with a fixed grammar:
 
 ```
-Business Name [Account-Type] Document-Type [Last4] [- Patient/Animal] [Invoice#] Date
+Vendor [AccountType] Topic [AccountId] [- Party] [RefId] Date.ext
 ```
+
+**Topic** comes from document type + optional short qualifier (`document_title`):
+
+| Situation | Topic segment | Example |
+|-----------|---------------|---------|
+| No qualifier | document type | `… Statement …` |
+| Premise / subject label | qualifier alone | `National Grid Barn 5018 …` |
+| Confirmation / Certificate / Permit subtype | `{qualifier} {type}` | `Fidelity Trade Confirmation …` |
 
 Examples:
 
 - `Amex CC Statement 1000 20240115.pdf`
 - `Chase Checking Statement 4521 20240115.pdf`
-- `Wells Fargo Checking Statement 4567 20240101.pdf`
+- `National Grid Barn 5018 20260729.pdf`
 - `Tesla Portfolio Statement 20231231.pdf`
-- `Dr Smith Invoice ACS-1234 20240115.pdf`
+- `Fidelity Trade Confirmation 20260731.pdf`
+- `Dr Smith Invoice ACS12B4 20240115.pdf`
 - `Vet Clinic Invoice - Whiskers 20240110.pdf`
+
+Short vendor names (Amex, Chase), low-PII account ids (last-4), and lowercase extensions are enforced in code.
 
 ## Supported Document Types
 
-- **Invoices** - Bills and payment requests
-- **Statements** - Bank, credit card, and account statements
-- **Receipts** - Payment confirmations
-- **Confirmations** - Order and transaction confirmations
-- **Notices** - Account updates and notifications
-- **Letters** - General correspondence
-- **Reports** - Financial and summary reports
+- **Invoice**, **Quote**, **Statement**, **Receipt**, **Confirmation**
+- **Notice**, **Letter**, **Report**, **Form**, **Contract**, **Policy**
+- **Certificate**, **Permit**, **Map**, **Itinerary**, **Test** (e.g. USDF scorecards)
 
 ## File Support
 
