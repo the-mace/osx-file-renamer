@@ -700,6 +700,112 @@ class TestRenameInvoiceConversion:
         filename, _ = _build_filename_parts(fields, '.pdf')
         assert filename == 'Quest Receipt 20260801.pdf'
 
+    def test_filename_hint_fallback_skips_orphan_and_prior_vendor_tokens(self):
+        """Re-renamed basenames must not re-inject junk or the old vendor as title.
+
+        - 'Advantage Propane Raven' → lone 'Raven' after vendor strip
+        - 'Advantage Propane Invoice' with model vendor Paraco → multi-word 'Advantage Propane'
+          is the prior vendor, not a document subject
+        Multi-word subjects without a type word (Tax Delinquent) still fill.
+        """
+        from invoice_renamer import (
+            _apply_filename_hint_fallback,
+            _topic_words_from_filename_hint,
+        )
+
+        hint = 'Advantage Propane Raven'
+        assert _topic_words_from_filename_hint(hint, 'Advantage Propane', 'Invoice') == 'Raven'
+
+        info = {
+            'business_name': 'Advantage Propane',
+            'document_type': 'Invoice',
+            'document_title': None,
+            'invoice_date': '2026-08-01',
+            'invoice_number': '980855',
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        _apply_filename_hint_fallback(info, hint)
+        assert info['document_title'] is None
+
+        # Prior vendor left in basename after model correctly chose parent brand
+        info_prior = dict(info)
+        info_prior['business_name'] = 'Paraco'
+        _apply_filename_hint_fallback(info_prior, 'Advantage Propane Invoice')
+        assert info_prior['document_title'] is None
+
+        # Multi-word subjects without a type signal still fill (Tax Delinquent)
+        info2 = dict(info)
+        info2['business_name'] = 'IRS'
+        info2['document_type'] = 'Notice'
+        _apply_filename_hint_fallback(info2, 'IRS Tax Delinquent')
+        assert info2['document_title'] == 'Tax Delinquent'
+
+    def test_filename_hint_fallback_ignores_vendor_tracking_junk(self):
+        """Download names like RavenInvoice30928720 must not invent a title.
+
+        Vendors often prefix invoices with account/route codes unrelated to content.
+        Only known confirmation subtypes (Trade, Order, …) may be recovered as a
+        single leftover token when the filename also contains a type word.
+        """
+        from invoice_renamer import (
+            _original_filename_hint,
+            _apply_filename_hint_fallback,
+            _topic_words_from_filename_hint,
+            _sanitize_document_fields,
+            _clean_and_validate_fields,
+            _build_filename_parts,
+        )
+
+        hint = _original_filename_hint('RavenInvoice30928720.pdf')
+        assert hint == 'Raven Invoice'
+        assert _topic_words_from_filename_hint(hint, 'Paraco', 'Invoice') == 'Raven'
+
+        info = {
+            'business_name': 'Paraco',
+            'document_type': 'Invoice',
+            'document_title': None,
+            'invoice_date': '2026-08-01',
+            'invoice_number': '980855',
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        _apply_filename_hint_fallback(info, hint)
+        assert info['document_title'] is None
+
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == 'Paraco Invoice 980855 20260801.pdf'
+        assert 'Raven' not in filename
+
+        # TradeConfirmation still recovers Trade when type is Confirmation
+        trade_info = {
+            'business_name': 'Fidelity',
+            'document_type': 'Confirmation',
+            'document_title': None,
+            'invoice_date': '2026-07-31',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'Brokerage',
+            'account_last_4': '9894',
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        _apply_filename_hint_fallback(
+            trade_info, _original_filename_hint('TradeConfirmation07312026.pdf')
+        )
+        assert trade_info['document_title'] == 'Trade'
+
     def test_build_extraction_prompt_is_fact_focused(self):
         """Prompt extracts facts only; filename assembly is owned by code."""
         from invoice_renamer import _build_extraction_prompt, INVOICE_EXTRACTION_PROMPT
@@ -708,12 +814,16 @@ class TestRenameInvoiceConversion:
         assert 'Trade Confirmation' in prompt
         assert 'weak signal' in prompt
         assert 'Content wins' in prompt
+        assert 'tracking junk' in prompt or 'Raven' in prompt
         # Base prompt: facts + qualifier, not a full naming tutorial
         base = _build_extraction_prompt(None)
         assert base == INVOICE_EXTRACTION_PROMPT
         assert 'document_title' in base
         assert 'Trade' in base  # confirmation subtype example
         assert 'Do NOT invent a filename' in base
+        # Dual-brand / rebrand guidance (Paraco vs Advantage Propane class of docs)
+        assert 'Dual brand' in base or 'rebrand' in base
+        assert 'remit-to' in base or 'Parent' in base
         # Assembly rules must not live in the prompt
         assert 'replaces document_type' not in base
         assert 'Trade Confirmation …' not in base

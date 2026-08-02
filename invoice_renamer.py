@@ -56,6 +56,8 @@ Priority facts: short Vendor, Type, short Account id, Date. Keep values SHORT an
 1. business_name — short brand, not legal entity (max ~3–4 words):
    Amex not American Express; BofA not Bank of America; Chase not JPMorgan Chase Bank N.A.
    Store cards → store name; co-brand when prominent (JetBlue); parent if more recognizable (Tesla).
+   Dual brand / rebrand: "Local DBA, A Parent Company" → Parent (e.g. Paraco not Advantage Propane).
+   Prefer remit-to payee, logo brand, and website domain (paracogas.com → Paraco) over a lone office/DBA line.
    Government: IRS, SSA, Medicare, USPS, NJ DMV, township name. Else top-of-page short name.
 
 2. document_type — REQUIRED, exactly ONE of:
@@ -159,7 +161,13 @@ _FILENAME_TYPE_SYNONYMS = frozenset({
     'forms', 'contract', 'contracts', 'policy', 'policies', 'certificate', 'certificates',
     'permit', 'permits', 'quote', 'quotes', 'estimate', 'estimates', 'itinerary', 'map',
     'maps', 'payment', 'payments', 'paid', 'remittance', 'remit', 'stub', 'summary',
-    'document', 'documents', 'file', 'scan', 'copy',
+    'document', 'documents', 'file', 'scan', 'copy', 'confirmation', 'confirmations',
+})
+# Only these single leftover tokens may be recovered when the filename also contains a type word
+# (TradeConfirmation → Trade). Arbitrary leading tokens (RavenInvoice30928720 → Raven) are
+# often vendor tracking junk with no relationship to document content.
+_FILENAME_SAFE_SINGLE_TOPICS = frozenset({
+    'trade', 'order', 'booking', 'reservation',
 })
 # Filler words that don't add meaning if they are all that remains of a title
 _GENERIC_TITLE_WORDS = frozenset({
@@ -228,6 +236,8 @@ def _build_extraction_prompt(filename_hint=None):
         'Use it as a weak signal for vendor, type, or document_title when consistent with content '
         '(e.g. "Trade Confirmation" → type Confirmation, document_title Trade). '
         'Content wins on conflict (page says payment received → Receipt even if named Billing). '
+        'Ignore download/tracking junk in the name that does not appear on the document '
+        '(e.g. RavenInvoice30928720 → ignore Raven; do not invent a title from it). '
         'Do not invent a premise/location label from the filename alone.\n\n'
     )
     return hint_block + INVOICE_EXTRACTION_PROMPT
@@ -310,6 +320,13 @@ def _apply_filename_hint_fallback(info, filename_hint):
       - the document type appears in the filename (Trade Confirmation → Confirmation), or
       - the hint is multi-word after normalization (Tax Delinquent, Order Confirmation)
     and then at least one distinctive topic word remains after stripping vendor/type/noise.
+
+    Guardrails after stripping vendor/type/noise:
+      - with type signal: only a single leftover word from the allowlist of confirmation
+        subtypes (Trade from TradeConfirmation). Arbitrary tokens like Raven from
+        RavenInvoice30928720 are vendor download junk — never promote them.
+      - without type signal: require ≥2 leftover words (Tax Delinquent). A lone orphan token
+        is not promoted.
     """
     if not info or not filename_hint:
         return info
@@ -322,8 +339,10 @@ def _apply_filename_hint_fallback(info, filename_hint):
         return info
 
     type_words = {w.lower() for w in str(info.get('document_type') or '').split() if w}
+    # Treat common type synonyms in the filename as a type signal even when the model's
+    # document_type wording differs slightly (Invoice vs billing already handled elsewhere).
     hint_lower = {w.lower() for w in hint_words}
-    has_type_signal = bool(type_words & hint_lower)
+    has_type_signal = bool(type_words & hint_lower) or bool(hint_lower & _FILENAME_TYPE_SYNONYMS)
     is_multiword = len(hint_words) >= 2
     if not has_type_signal and not is_multiword:
         return info
@@ -333,11 +352,29 @@ def _apply_filename_hint_fallback(info, filename_hint):
         business_name=info.get('business_name'),
         document_type=info.get('document_type'),
     )
-    if topic:
-        info['document_title'] = topic
-        logging.getLogger(__name__).info(
-            f"Filled document_title from filename hint: {topic!r} (hint={filename_hint!r})"
-        )
+    if not topic:
+        return info
+
+    topic_words = [w for w in topic.split() if w]
+    if has_type_signal:
+        # Only known confirmation subtypes — not arbitrary leading junk (RavenInvoice → Raven).
+        if len(topic_words) != 1:
+            return info
+        if topic_words[0].lower() not in _FILENAME_SAFE_SINGLE_TOPICS:
+            return info
+        # Prefer when the model also classified as Confirmation; still allow if the filename
+        # carried "Confirmation" and the model agreed (type words already matched).
+        doc_type = str(info.get('document_type') or '').strip().lower()
+        if doc_type and doc_type != 'confirmation':
+            return info
+    elif len(topic_words) < 2:
+        # Multi-word subjects only when the name has no type word.
+        return info
+
+    info['document_title'] = topic
+    logging.getLogger(__name__).info(
+        f"Filled document_title from filename hint: {topic!r} (hint={filename_hint!r})"
+    )
     return info
 
 
