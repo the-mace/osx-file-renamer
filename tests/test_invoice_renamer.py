@@ -881,6 +881,20 @@ class TestRenameInvoiceConversion:
                 },
                 'National Grid Barn 5018 20260729.pdf',
             ),
+            # Toll/E-ZPass: hallucinated premise from mailing address must not replace Statement
+            (
+                {
+                    'business_name': 'EZDriveMA',
+                    'document_type': 'Statement',
+                    'document_title': 'Barn',
+                    'invoice_date': '2026-08-03',
+                    'invoice_number': None,
+                    'patient_animal_name': None,
+                    'account_type': None,
+                    'account_last_4': '6996',
+                },
+                'EZDriveMA Statement 6996 20260803.pdf',
+            ),
             (
                 {
                     'business_name': 'Fidelity',
@@ -945,6 +959,69 @@ class TestRenameInvoiceConversion:
             'account_last_4': '1234',
         })
         assert fields['document_title'] == 'Cogen'
+
+    def test_premise_style_detection_and_vendor_blocks(self):
+        """Premise labels are short location tokens; banks/tolls block them."""
+        from invoice_renamer import (
+            _is_premise_style_qualifier,
+            _vendor_blocks_premise_label,
+            _should_drop_premise_qualifier,
+            _sanitize_document_fields,
+        )
+
+        assert _is_premise_style_qualifier('Barn') is True
+        assert _is_premise_style_qualifier('Cogen') is True
+        assert _is_premise_style_qualifier('Apt 2B') is True
+        assert _is_premise_style_qualifier('Unit B') is True
+        assert _is_premise_style_qualifier('Tax Delinquent') is False
+        assert _is_premise_style_qualifier('Trade') is False
+        assert _is_premise_style_qualifier('Auto Policy') is False
+
+        assert _vendor_blocks_premise_label('EZDriveMA') is True
+        assert _vendor_blocks_premise_label('E-ZPass MA') is True
+        assert _vendor_blocks_premise_label('BofA') is True
+        assert _vendor_blocks_premise_label('Bank of America') is True
+        assert _vendor_blocks_premise_label('Amex') is True
+        assert _vendor_blocks_premise_label('National Grid') is False
+        assert _vendor_blocks_premise_label('Eversource') is False
+
+        # Toll + Barn → drop
+        assert _should_drop_premise_qualifier({
+            'business_name': 'EZDriveMA',
+            'document_title': 'Barn',
+            'account_type': None,
+        }) is True
+        # Utility + Barn → keep
+        assert _should_drop_premise_qualifier({
+            'business_name': 'National Grid',
+            'document_title': 'Barn',
+            'account_type': None,
+        }) is False
+        # Bank-style account type + Barn → drop even for unknown vendor
+        assert _should_drop_premise_qualifier({
+            'business_name': 'Some Credit Union',
+            'document_title': 'Barn',
+            'account_type': 'Checking',
+        }) is True
+        # Subject qualifier never dropped as premise
+        assert _should_drop_premise_qualifier({
+            'business_name': 'BofA',
+            'document_title': 'Tax Delinquent',
+            'account_type': None,
+        }) is False
+
+        info = {
+            'business_name': 'EZDriveMA',
+            'document_type': 'Statement',
+            'document_title': 'Barn',
+            'invoice_date': '2026-08-03',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '6996',
+        }
+        _sanitize_document_fields(info)
+        assert info['document_title'] is None
 
 
 class TestMain:

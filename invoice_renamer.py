@@ -92,11 +92,16 @@ Priority facts: short Vendor, Type, short Account id, Date. Keep values SHORT an
 
 8. document_title — optional SHORT qualifier (not a full filename). Use when it adds meaning beyond type:
    - Confirmation subtype: Trade, Order, Booking, Reservation
-   - Utility/telecom premise label only (not street address): "130 WEST ST BARN" → "Barn";
-     "… **COGEN**" → "Cogen"; "Apt 2B" / Unit B / Garage → that short label
+   - Utility/telecom multi-service PREMISE label only when the document itself labels a
+     service location (meter site, service address name, premise id) — NOT the customer
+     mailing address. Examples: service location "BARN" → "Barn"; meter/site "COGEN" →
+     "Cogen"; "Apt 2B" / Unit B / Garage when that is the billed premise.
+     null for bank, credit card, brokerage, toll/E-ZPass, transit, and any statement that
+     only shows a street mailing address with no separate service-location label.
+     Never invent Barn/Cogen/Garage/etc. from a street line alone.
    - Non-routine subject: Tax Delinquent, W-2, Lease, EOB, Building Permit, Auto Policy
    - Multi-item summary: short synthesis (e.g. Auto Property Insurance)
-   null when Vendor + type is enough (routine invoice, receipt, itinerary, plain bank/CC statement).
+   null when Vendor + type is enough (routine invoice, receipt, itinerary, plain bank/CC/toll statement).
    Do not restate the type ("Invoice Document", "Travel Itinerary" → null). Max 5 words, title case.
    Do not repeat vendor words. Do not invent a premise label that is not on the document.
 
@@ -176,6 +181,40 @@ _FILENAME_SAFE_SINGLE_TOPICS = frozenset({
 _GENERIC_TITLE_WORDS = frozenset({
     'travel', 'document', 'documents', 'general', 'official', 'the', 'a', 'an',
     'and', 'of', 'for', 'to', 'in', 'at', 'by', 'with', 'from', 'on',
+})
+# Short service-location tokens used as document_title for multi-premise utilities.
+# Models sometimes invent these from a mailing address (or prompt leakage); code drops
+# them unless the vendor looks like a multi-service utility/telecom.
+_PREMISE_STYLE_LABELS = frozenset({
+    'barn', 'cogen', 'cogeneration', 'garage', 'shed', 'house', 'cottage', 'cabin',
+    'warehouse', 'office', 'shop', 'store', 'farm', 'main', 'secondary', 'primary',
+    'residence', 'home', 'apartment', 'condo', 'unit', 'suite', 'building', 'bldg',
+})
+# Apt 2B, Unit B, Suite 100, Bldg 3 — short premise codes, not subjects like "Tax Delinquent"
+_PREMISE_STYLE_RE = re.compile(
+    r'^(?:apt|apartment|unit|ste|suite|bldg|building|fl|floor|rm|room)\s*[#.]?\s*[a-z0-9-]{1,6}$',
+    re.IGNORECASE,
+)
+# Banks, cards, brokerages, tolls, transit — never multi-premise utility naming
+_NO_PREMISE_VENDOR_RE = re.compile(
+    r'(?:'
+    r'ez\s*drive|ezdrive|e-?z\s*pass|ez\s*pass|ezpass|'
+    r'\btoll\b|thruway|turnpike|transit|metrocard|\bomny\b|'
+    r'\bamex\b|american\s*express|'
+    r'\bbofa\b|bank\s*of\s*america|\bchase\b|jpmorgan|jp\s*morgan|'
+    r'wells\s*fargo|\bciti\b|citibank|capital\s*one|\bdiscover\b|'
+    r'\bfidelity\b|\bschwab\b|\bvanguard\b|td\s*ameritrade|e-?trade|'
+    r'\bpaypal\b|\bvenmo\b|cash\s*app|'
+    r'\birs\b|\bssa\b|\bmedicare\b|\busps\b|'
+    r'\bbank\b|\bcredit\s*union\b|\bbrokerage\b'
+    r')',
+    re.IGNORECASE,
+)
+# Bank-style account categories: if present, premise labels do not apply
+_BANK_STYLE_ACCOUNT_TYPES = frozenset({
+    'checking', 'savings', 'money market', 'cd', 'ira', 'investment', 'credit card',
+    'cc', 'platinum', 'gold', 'annuity', 'vul', 'life insurance', 'brokerage', '401k',
+    'portfolio', 'roth', 'hsa', 'fsa', 'margin',
 })
 
 
@@ -1045,8 +1084,54 @@ def format_date(date_str):
     return "00000000"
 
 
+def _is_premise_style_qualifier(title):
+    """True if title looks like a utility/telecom service-location label (not a subject).
+
+    Premise labels are short (Barn, Cogen, Apt 2B). Subject qualifiers are phrases
+    (Tax Delinquent, Auto Policy) and confirmation subtypes (Trade, Order).
+    """
+    if not title:
+        return False
+    text = str(title).strip()
+    if not text or text.lower() == 'null':
+        return False
+    words = text.split()
+    if len(words) == 1 and words[0].lower() in _PREMISE_STYLE_LABELS:
+        return True
+    if len(words) <= 3 and _PREMISE_STYLE_RE.match(text):
+        return True
+    # "West St Barn" / "Main Barn" — last token is a known premise label
+    if 1 < len(words) <= 4 and words[-1].lower() in _PREMISE_STYLE_LABELS:
+        return True
+    return False
+
+
+def _vendor_blocks_premise_label(business_name):
+    """True for banks, cards, brokerages, toll/E-ZPass, transit — never multi-premise utilities."""
+    if not business_name:
+        return False
+    return bool(_NO_PREMISE_VENDOR_RE.search(str(business_name)))
+
+
+def _should_drop_premise_qualifier(info):
+    """Drop hallucinated premise labels outside multi-service utility/telecom context.
+
+    Keeps National Grid + Barn; drops EZDriveMA/BofA + Barn invented from a mailing address.
+    """
+    title = _raw_qualifier(info)
+    if not title or not _is_premise_style_qualifier(title):
+        return False
+    if _vendor_blocks_premise_label(info.get('business_name')):
+        return True
+    account_type = info.get('account_type')
+    if account_type and str(account_type).strip().lower() in _BANK_STYLE_ACCOUNT_TYPES:
+        return True
+    return False
+
+
 def _sanitize_document_fields(info):
     """Sanitize account and invoice fields based on document type"""
+    logger = logging.getLogger(__name__)
     # Clean up any "null" strings returned by API - convert to None
     for key in info:
         if info[key] == "null":
@@ -1061,6 +1146,17 @@ def _sanitize_document_fields(info):
     # For receipts and confirmations, don't treat numbers as invoice numbers
     if info.get('document_type') in ['Receipt', 'Confirmation']:
         info['invoice_number'] = None
+
+    # Premise labels only for multi-service utilities — drop for bank/toll/etc.
+    if _should_drop_premise_qualifier(info):
+        dropped = _raw_qualifier(info)
+        info['document_title'] = None
+        if 'qualifier' in info:
+            info['qualifier'] = None
+        logger.info(
+            f"Dropped premise-style document_title {dropped!r} "
+            f"(vendor={info.get('business_name')!r}, account_type={info.get('account_type')!r})"
+        )
 
 
 def _clean_and_validate_fields(info):

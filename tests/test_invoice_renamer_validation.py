@@ -208,6 +208,60 @@ class TestRenameInvoiceDocumentTypeSanitization:
         assert expected.exists()
 
     @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_toll_drops_hallucinated_premise(
+        self, mock_extract, tmp_path
+    ):
+        """E-ZPass/toll statements must not use mailing-address premise labels."""
+        test_file = tmp_path / "statement.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'EZDriveMA',
+            'document_type': 'Statement',
+            'document_title': 'Barn',  # invented from street address — must drop
+            'invoice_date': '2026-08-03',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '6996',
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "EZDriveMA Statement 6996 20260803.pdf"
+        assert expected.exists()
+        assert not (tmp_path / "EZDriveMA Barn 6996 20260803.pdf").exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_bank_drops_hallucinated_premise(
+        self, mock_extract, tmp_path
+    ):
+        """Bank statements must not pick up utility premise labels."""
+        test_file = tmp_path / "stmt.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'BofA',
+            'document_type': 'Statement',
+            'document_title': 'Barn',
+            'invoice_date': '2026-07-31',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'Investment',
+            'account_last_4': '3890',
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "BofA Investment Statement 3890 20260731.pdf"
+        assert expected.exists()
+        assert not (tmp_path / "BofA Barn 3890 20260731.pdf").exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_account_last4_without_type_skips_invoice_number(
         self, mock_extract, tmp_path
     ):

@@ -134,6 +134,7 @@ make lint
 
    - `document_title` is an optional **qualifier** (premise, subtype, form name), not the full filename
    - Topic policy is in `_select_display_topic`: subtype types keep `{qualifier} {type}` (e.g. Trade Confirmation); otherwise qualifier replaces type (e.g. Barn)
+   - Premise-style labels (Barn, Cogen, Apt 2B) are dropped for banks/tolls/transit via `_should_drop_premise_qualifier` so mailing addresses cannot invent multi-premise topics
    - Short vendors (Amex, BofA, Chase); account id last-4 / short alnum (low PII); lowercase extensions
    - Original filename is a weak signal + code fallback for missing qualifier — not the primary naming brain
 
