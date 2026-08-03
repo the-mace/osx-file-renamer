@@ -147,6 +147,13 @@ GENERIC_FILENAME_PATTERNS = [
     r'^(img|image|photo|pic|scan|doc|document|file|untitled|screenshot|dsc|test|temp|tmp|sample|example|output)\s*\d*$',
     r'^\d+$',
 ]
+# Continuous hex runs this long usually mean CDN/email attachment hashes, not document titles.
+# Shorter runs alone are too common in real names (e.g. partial account ids).
+_FILENAME_HEX_RUN_MIN = 24
+# Pure-hex token (only 0-9a-f) — leftover from splitting hash basenames (dcd, cdfd, cda, dae)
+_FILENAME_PURE_HEX_TOKEN_RE = re.compile(r'^[0-9a-fA-F]+$')
+# Letters outside the hex alphabet indicate real words (Trade, Raven, Tax, …)
+_FILENAME_NON_HEX_LETTER_RE = re.compile(r'[g-zG-Z]')
 # Noise tokens stripped from filename hints (not useful as topic words)
 _FILENAME_NOISE_WORDS = frozenset({
     'file', 'pdf', 'jpg', 'jpeg', 'png', 'heic', 'download', 'downloads', 'copy', 'final',
@@ -246,17 +253,55 @@ def _strip_filename_date_tokens(name):
     name = re.sub(r'[\s_\-]*\d{6}$', '', name)
     # Trailing ISO date
     name = re.sub(r'[\s_\-]*\d{4}[-_]\d{2}[-_]\d{2}$', '', name)
+    # Trailing MM-DD-YYYY / MM_DD_YYYY (mail/portal downloads)
+    name = re.sub(r'[\s_\-]*\d{2}[-_]\d{2}[-_]\d{4}$', '', name)
     return name.strip()
+
+
+def _is_hash_like_basename(raw_name):
+    """True when the basename is download-tracking junk (hash/token ± account/date).
+
+    Portals often name files like:
+      <sha256>_<account>_<MM-DD-YYYY>.pdf
+    Splitting those on letter/digit boundaries yields pure-hex fragments (dcd, cdfd, cda)
+    that must never become document_title.
+    """
+    if not raw_name:
+        return False
+    # Long continuous hex run is the smoking gun for CDN/email attachment hashes
+    if re.search(rf'(?i)[0-9a-f]{{{_FILENAME_HEX_RUN_MIN},}}', raw_name):
+        # Real words use letters outside a–f (Trade, Raven, Invoice, Tax, …)
+        if not _FILENAME_NON_HEX_LETTER_RE.search(raw_name):
+            return True
+    # Whole basename (ignoring digits/separators) is only hex letters and long enough
+    letters_only = re.sub(r'[^a-zA-Z]', '', raw_name)
+    if (
+        len(raw_name) >= _FILENAME_HEX_RUN_MIN
+        and letters_only
+        and re.fullmatch(r'(?i)[a-f]+', letters_only)
+    ):
+        return True
+    return False
+
+
+def _is_pure_hex_token(word):
+    """True for tokens that are only hex digits (0-9a-f) — hash fragments, not topics."""
+    if not word or len(word) < 2:
+        return False
+    return bool(_FILENAME_PURE_HEX_TOKEN_RE.fullmatch(word)) and not _FILENAME_NON_HEX_LETTER_RE.search(word)
 
 
 def _original_filename_hint(file_path):
     """Build a human-readable hint from the original filename, or None if it's not useful.
 
     Strips date prefixes/suffixes (often added by Shortcuts/automations), splits camelCase
-    and digit boundaries, then filters out generic camera/scanner names.
+    and digit boundaries, then filters out generic camera/scanner names and hash-like
+    download tokens.
     """
-    name = os.path.splitext(os.path.basename(file_path))[0]
-    name = _strip_filename_date_tokens(name)
+    raw = os.path.splitext(os.path.basename(file_path))[0]
+    if _is_hash_like_basename(raw):
+        return None
+    name = _strip_filename_date_tokens(raw)
     name = _split_filename_tokens(name)
     # Date tokens may reappear after camelCase/digit splits (e.g. TradeConfirmation07312026)
     name = _strip_filename_date_tokens(name)
@@ -331,6 +376,9 @@ def _topic_words_from_filename_hint(filename_hint, business_name=None, document_
         if re.fullmatch(r'\d+', word):
             continue
         if re.fullmatch(r'\d{4}[-_]\d{2}[-_]\d{2}', word):
+            continue
+        # Hash fragments from split download tokens (dcd, cdfd, cda, dae, …)
+        if _is_pure_hex_token(word):
             continue
         # Skip tiny tokens (e.g. leftover "CC" after account-word filtering edge cases)
         if len(re.sub(r'[^a-zA-Z0-9]', '', word)) < 3:

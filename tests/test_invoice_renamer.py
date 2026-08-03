@@ -619,6 +619,66 @@ class TestRenameInvoiceConversion:
         assert _original_filename_hint('scan.pdf') is None
         assert _original_filename_hint('test.pdf') is None
 
+    def test_original_filename_hint_rejects_hash_download_tokens(self):
+        """CDN/portal hash basenames must not become hints or titles.
+
+        Real-world Xfinity download:
+          <sha...>_<account>_<MM-DD-YYYY>.pdf
+        Previously split into pure-hex fragments → document_title 'DCD CDFD Cda Dae'.
+        """
+        from invoice_renamer import (
+            _original_filename_hint,
+            _is_hash_like_basename,
+            _topic_words_from_filename_hint,
+            _apply_filename_hint_fallback,
+            _sanitize_document_fields,
+            _clean_and_validate_fields,
+            _build_filename_parts,
+        )
+
+        hash_name = (
+            '86b5348001a2840fa29228fd1dcd1f1cdfd6018f05a79c6cda68716e6dae2d73'
+            '7bf2cf7eb50c3dd31ee3ce51c4d42338_8499053050018324_08-02-2026.pdf'
+        )
+        assert _is_hash_like_basename(hash_name[:-4])
+        assert _original_filename_hint(hash_name) is None
+        # Even if a raw hex soup were passed, topic extraction drops pure-hex tokens
+        soup = (
+            '86 b 5348001 a 2840 fa 29228 fd 1 dcd 1 f 1 cdfd 6018 f 05 a 79 c 6 '
+            'cda 68716 e 6 dae 2 d 737 bf 2 cf 7 eb 50 c 3 dd 31 ee 3 ce 51 c 4 d '
+            '42338 8499053050018324 08 02 2026'
+        )
+        assert _topic_words_from_filename_hint(soup, 'Xfinity', 'Statement') is None
+
+        info = {
+            'business_name': 'Xfinity',
+            'document_type': 'Statement',
+            'document_title': None,
+            'invoice_date': '2026-08-02',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '8324',
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        _apply_filename_hint_fallback(info, soup)
+        assert info['document_title'] is None
+        _apply_filename_hint_fallback(info, _original_filename_hint(hash_name))
+        assert info['document_title'] is None
+
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == 'Xfinity Statement 8324 20260802.pdf'
+        assert 'DCD' not in filename
+        assert 'Cda' not in filename
+
+        # Meaningful names with some hex-looking substrings still work
+        assert _original_filename_hint('TradeConfirmation07312026.pdf') == 'Trade Confirmation'
+        assert not _is_hash_like_basename('RavenInvoice30928720')
+
     def test_filename_hint_fallback_fills_trade_confirmation_title(self):
         """When LLM leaves title null, recover 'Trade' from TradeConfirmation filename."""
         from invoice_renamer import (
