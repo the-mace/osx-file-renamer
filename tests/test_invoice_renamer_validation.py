@@ -356,6 +356,52 @@ class TestRenameInvoiceAccountNumberValidation:
         assert expected.exists()
 
     @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_investment_account(self, mock_extract, tmp_path):
+        """Investment (not Checking) is a valid account_type in filenames."""
+        test_file = tmp_path / "test.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'BofA',
+            'document_type': 'Statement',
+            'invoice_date': '2024-07-31',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'Investment',
+            'account_last_4': '3890',
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "BofA Investment Statement 3890 20240731.pdf"
+        assert expected.exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_business_investment_account_abbreviated(self, mock_extract, tmp_path):
+        """Verbose BofA product name normalizes to Investment."""
+        test_file = tmp_path / "test.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'BofA',
+            'document_type': 'Statement',
+            'invoice_date': '2024-07-31',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'Business Investment Account',
+            'account_last_4': '3890',
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "BofA Investment Statement 3890 20240731.pdf"
+        assert expected.exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_alphanumeric_invoice_number(self, mock_extract, tmp_path):
         """Test short alphanumeric invoice numbers are included."""
         test_file = tmp_path / "test.pdf"

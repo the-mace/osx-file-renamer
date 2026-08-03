@@ -7,6 +7,7 @@ import json
 import re
 from datetime import datetime
 import logging
+from logging.handlers import TimedRotatingFileHandler
 import hashlib
 import shutil
 import glob
@@ -79,10 +80,11 @@ Priority facts: short Vendor, Type, short Account id, Date. Keep values SHORT an
 5. patient_animal_name — medical patient or vet pet name only; else null.
 
 6. account_type — specific category when known, else null:
-   Checking, Savings, Money Market, CD, IRA, Credit Card (or Platinum/Gold if labeled as tier),
+   Checking, Savings, Money Market, CD, IRA, Investment, Credit Card (or Platinum/Gold if labeled as tier),
    Annuity, VUL, Life Insurance, Brokerage, 401k.
    Multi-account overview (2+ different account numbers) → "Portfolio".
-   null for generic "Account" / "Investment Account" only.
+   "Business Investment Account" / "Investment Account" → Investment (not Checking, not null).
+   null only for a fully generic unlabeled "Account".
 
 7. account_last_4 — last 4 digits or short alphanumeric id for a SINGLE account/card
    (also utility/telecom service accounts even when account_type is null).
@@ -129,6 +131,7 @@ FILENAME_ABBREVIATIONS = [
     (re.compile(r'^Wells Fargo(?: Bank)?$', re.IGNORECASE), 'Wells Fargo'),
     (re.compile(r'^Citibank(?: N\.?A\.?)?$', re.IGNORECASE), 'Citi'),
     (re.compile(r'^Credit Card$', re.IGNORECASE), 'CC'),
+    (re.compile(r'^(?:Business\s+)?Investment(?:\s+Account)?$', re.IGNORECASE), 'Investment'),
     (re.compile(r'^Social Security Administration$', re.IGNORECASE), 'SSA'),
     (re.compile(r'^Internal Revenue Service$', re.IGNORECASE), 'IRS'),
 ]
@@ -149,7 +152,7 @@ _FILENAME_NOISE_WORDS = frozenset({
 # Account/product words often present in names; not document topics by themselves
 _FILENAME_ACCOUNT_WORDS = frozenset({
     'cc', 'credit', 'card', 'checking', 'savings', 'brokerage', 'margin', 'ira', 'roth',
-    'portfolio', '401k', 'hsa', 'fsa', 'cash', 'money', 'market', 'cd',
+    'portfolio', '401k', 'hsa', 'fsa', 'cash', 'money', 'market', 'cd', 'investment',
 })
 # Words that name a document *kind* (or near-synonyms). Never promote these into document_title
 # from a filename — they either restate document_type or conflict with content-based type
@@ -548,42 +551,58 @@ def convert_to_pdf(file_path):
         return _convert_docx_to_pdf(file_path, temp_pdf_path)
 
 
-def setup_logging():
-    """Setup logging to /tmp (or platform-specific temp) with rotation to keep file size manageable"""
-    # Use /tmp on Unix-like systems, fall back to platform temp on others
+# Keep rename history across multi-file batches without retaining forever.
+LOG_RETENTION_DAYS = 1  # current file + this many previous daily backups
+# Noisy third-party loggers that used to flood /tmp with full LLM prompts
+_NOISY_LOGGERS = (
+    'LiteLLM', 'litellm', 'httpx', 'httpcore', 'openai', 'urllib3', 'asyncio',
+)
+
+
+def get_log_file_path():
+    """Return the primary log file path (/tmp on Unix, platform temp otherwise)."""
     if os.path.exists('/tmp') and os.path.isdir('/tmp'):  # nosec B108
-        log_file = '/tmp/invoice_renamer.log'  # nosec B108
-    else:
-        log_file = os.path.join(tempfile.gettempdir(), 'invoice_renamer.log')
+        return '/tmp/invoice_renamer.log'  # nosec B108
+    return os.path.join(tempfile.gettempdir(), 'invoice_renamer.log')
 
-    # Check if log file exists and is too large (>100KB), truncate to last 50KB
-    if os.path.exists(log_file):
-        file_size = os.path.getsize(log_file)
-        max_size = 100 * 1024  # 100KB
-        if file_size > max_size:
-            # Read the last portion of the file
-            keep_size = 50 * 1024  # Keep last 50KB
-            data = None
-            with open(log_file, 'rb') as f:
-                f.seek(-keep_size, 2)  # Seek from end
-                data = f.read()
-                # Find first complete line
-                first_newline = data.find(b'\n')
-                if first_newline > 0:
-                    data = data[first_newline + 1:]
 
-            # Write truncated data back (file is already closed from previous block)
-            if data is not None:
-                with open(log_file, 'wb') as f:
-                    f.write(b'=== LOG TRUNCATED TO PREVENT EXCESSIVE SIZE ===\n')
-                    f.write(data)
+def setup_logging():
+    """Setup INFO logging with ~1 day retention for multi-file rename history.
 
-    logging.basicConfig(
-        filename=log_file,
-        level=logging.DEBUG,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+    Previous design (DEBUG + 100KB truncate) was wiped by a single LiteLLM dump,
+    so agent/debug sessions could not see earlier renames from the same day.
+    """
+    log_file = get_log_file_path()
+    log_dir = os.path.dirname(log_file) or '.'
+    os.makedirs(log_dir, exist_ok=True)
+
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+
+    abs_log = os.path.abspath(log_file)
+    already = any(
+        isinstance(h, TimedRotatingFileHandler)
+        and os.path.abspath(getattr(h, 'baseFilename', '')) == abs_log
+        for h in root.handlers
     )
+    if not already:
+        handler = TimedRotatingFileHandler(
+            log_file,
+            when='midnight',
+            interval=1,
+            backupCount=LOG_RETENTION_DAYS,
+            encoding='utf-8',
+        )
+        handler.setLevel(logging.INFO)
+        handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S',
+        ))
+        root.addHandler(handler)
+
+    for name in _NOISY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
+
     return logging.getLogger(__name__)
 
 

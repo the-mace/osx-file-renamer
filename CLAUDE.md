@@ -245,7 +245,7 @@ Key fixtures: `sample_jpeg_data`, `temp_file_cleanup`, `mock_env_file`
 
 ## File Locations
 
-- Logs: `/tmp/invoice_renamer.log` and `/tmp/invoice_debug.log` on Unix-like systems (falls back to platform temp on Windows)
+- Logs: `/tmp/invoice_renamer.log` on Unix-like systems (falls back to platform temp on Windows). Timed daily rotation keeps the current day plus 1 prior day (`backupCount=1`). Level is INFO (not DEBUG) so multi-file rename history is not wiped by LiteLLM prompt dumps.
 - API key: Environment variable or `~/.env` file in home directory
 - Installation: Uses system Python at `/usr/local/bin/python3` to install, creates command at `/Library/Frameworks/Python.framework/Versions/3.11/bin/invoice-renamer`, symlinked from `/usr/local/bin/invoice-renamer`
 - OSX Shortcuts: Invoke as `invoice-renamer "Repeat Item (File Path)"` - the symlink in `/usr/local/bin` makes the command available in PATH

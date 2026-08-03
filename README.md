@@ -43,7 +43,7 @@ Please review your chosen provider's terms of service and privacy policy to unde
 - **Patient/Medical Records**: Specifically handles medical and veterinary documents
 - **File Type Support**: Works with PDFs, images, and text documents
 - **Dry Run Mode**: Preview changes before applying them
-- **Logging**: Comprehensive logging with automatic log rotation
+- **Logging**: Daily-rotated INFO logs (~1 day retained) for multi-file rename history
 - **Safe Operations**: Prevents overwriting files and provides conflict resolution
 
 ## Prerequisites
@@ -357,11 +357,17 @@ pngquant --version # pngquant
 
 ### Debug Logging
 
-The tool provides detailed error messages for common issues. Check the log file in your system's temporary directory for additional debugging information:
+Rename runs log at **INFO** to a daily-rotated file (current day + one previous day). Third-party LLM client noise is suppressed so a batch of files still leaves readable history.
 
 ```bash
-# On macOS/Linux
+# On macOS/Linux — live tail
 tail -f /tmp/invoice_renamer.log
+
+# Recent renames only
+grep -E 'Successfully renamed|Would rename|New filename|Extracted account type|Finished' /tmp/invoice_renamer.log
+
+# Previous day's rotated backup (if present)
+ls -la /tmp/invoice_renamer.log*
 
 # Or find the temp directory
 python3 -c "import tempfile; print(tempfile.gettempdir())"

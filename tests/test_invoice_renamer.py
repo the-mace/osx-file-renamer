@@ -4,55 +4,57 @@ import sys
 import subprocess
 import re
 from datetime import datetime
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch, MagicMock
 import json
 
 # Import the functions to test from invoice_renamer.py
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from logging.handlers import TimedRotatingFileHandler
 from invoice_renamer import (
-    setup_logging, call_llm_api, extract_invoice_info,
+    setup_logging, get_log_file_path, call_llm_api, extract_invoice_info,
     clean_filename, format_date, rename_invoice, main,
     convert_to_pdf, _find_soffice_cmd,
     CONVERTIBLE_IMAGE_EXTENSIONS, CONVERTIBLE_DOC_EXTENSIONS,
     _build_filename_parts, _clean_and_validate_fields, _sanitize_document_fields,
     _find_pdftoppm, _extract_usdf_page2_rotated, USDF_PAGE2_PROMPT,
+    LOG_RETENTION_DAYS,
 )
 
 
 class TestSetupLogging:
 
-    @patch('invoice_renamer.tempfile.gettempdir')
-    @patch('invoice_renamer.os.path.exists')
-    @patch('invoice_renamer.os.path.getsize')
-    @patch('builtins.open', new_callable=mock_open)
-    @patch('invoice_renamer.logging.basicConfig')
-    def test_setup_logging_normal_file(self, mock_basic_config, mock_file, mock_getsize, mock_exists, mock_tempdir):
-        """Test setup_logging with normal log file."""
-        mock_tempdir.return_value = "/tmp"
-        mock_exists.return_value = True
-        mock_getsize.return_value = 50 * 1024  # Less than 100KB
+    def test_setup_logging_uses_timed_rotation(self, tmp_path, monkeypatch):
+        """Test setup_logging uses daily rotation with ~1 day retention."""
+        log_path = tmp_path / "invoice_renamer.log"
+        monkeypatch.setattr('invoice_renamer.get_log_file_path', lambda: str(log_path))
+        # Isolate root handlers so other tests are not affected
+        root = __import__('logging').getLogger()
+        old_handlers = list(root.handlers)
+        for h in old_handlers:
+            root.removeHandler(h)
+        try:
+            logger = setup_logging()
+            assert logger.name == "invoice_renamer"
+            timed = [h for h in root.handlers if isinstance(h, TimedRotatingFileHandler)]
+            assert len(timed) == 1
+            assert timed[0].backupCount == LOG_RETENTION_DAYS
+            assert timed[0].level == __import__('logging').INFO
+            # Second call must not stack handlers
+            setup_logging()
+            timed_after = [h for h in root.handlers if isinstance(h, TimedRotatingFileHandler)]
+            assert len(timed_after) == 1
+        finally:
+            for h in list(root.handlers):
+                h.close()
+                root.removeHandler(h)
+            for h in old_handlers:
+                root.addHandler(h)
 
-        logger = setup_logging()
-
-        assert logger.name == "invoice_renamer"
-        # The log file should not be opened since it's within size limits
-        mock_file.assert_not_called()
-
-    @patch('invoice_renamer.tempfile.gettempdir')
-    @patch('invoice_renamer.os.path.exists')
-    @patch('invoice_renamer.os.path.getsize')
-    @patch('builtins.open', new_callable=mock_open, read_data=b"=== LOG TRUNCATED ===\nold content")
-    def test_setup_logging_truncate_large_file(self, mock_file, mock_getsize, mock_exists, mock_tempdir):
-        """Test setup_logging truncates large log files."""
-        mock_tempdir.return_value = "/tmp"
-        mock_exists.return_value = True
-        mock_getsize.return_value = 150 * 1024  # Over 100KB
-
-        setup_logging()
-
-        # Verify file was opened for reading and writing
-        assert mock_file.call_count >= 2
+    def test_get_log_file_path_prefers_tmp(self):
+        """Primary log path is under /tmp when available."""
+        path = get_log_file_path()
+        assert path.endswith('invoice_renamer.log')
 
 
 class TestCallLLMApi:
