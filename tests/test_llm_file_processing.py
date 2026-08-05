@@ -29,7 +29,7 @@ class TestProcessImageFile:
         assert "image_url" in result
         assert "url" in result["image_url"]
         assert result["image_url"]["url"].startswith("data:image/jpeg;base64,")
-        assert result["image_url"]["detail"] == "low"
+        assert result["image_url"]["detail"] == "high"
 
         # Verify base64 encoding
         base64_part = result["image_url"]["url"].split(",")[1]
@@ -570,7 +570,7 @@ class TestConvertPdfToImages:
 
         assert result["type"] == "image_url"
         assert "image_url" in result
-        assert result["image_url"]["detail"] == "low"
+        assert result["image_url"]["detail"] == "high"
 
         # Verify pdftoppm was called with correct arguments
         call_args = mock_run.call_args[0][0]

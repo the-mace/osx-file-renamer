@@ -112,7 +112,7 @@ class TestCallLLMApi:
             "type": "image_url",
             "image_url": {
                 "url": "data:image/jpeg;base64,test",
-                "detail": "low"
+                "detail": "high"
             }
         }
 
@@ -146,11 +146,11 @@ class TestCallLLMApi:
             "images": [
                 {
                     "type": "image_url",
-                    "image_url": {"url": "data:image/jpeg;base64,image1", "detail": "low"}
+                    "image_url": {"url": "data:image/jpeg;base64,image1", "detail": "high"}
                 },
                 {
                     "type": "image_url",
-                    "image_url": {"url": "data:image/jpeg;base64,image2", "detail": "low"}
+                    "image_url": {"url": "data:image/jpeg;base64,image2", "detail": "high"}
                 }
             ]
         }

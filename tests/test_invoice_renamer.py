@@ -200,6 +200,12 @@ class TestCleanFilename:
         result = clean_filename(long_name, limit_words=3)
         assert result == "This is"
 
+    def test_clean_filename_ampersand_initials_not_extra_words(self):
+        """A & L style vendors must not lose Service to the word cap."""
+        assert clean_filename("A & L Pool Service", limit_words=4) == "A&L Pool Service"
+        assert clean_filename("A&L Pool Service", limit_words=4) == "A&L Pool Service"
+        assert clean_filename("B & G Electric Co", limit_words=4) == "B&G Electric Co"
+
     def test_clean_filename_credit_card_abbrev(self):
         """Test clean_filename abbreviates common terms."""
         assert clean_filename("Credit Card") == "CC"

@@ -188,9 +188,11 @@ If renames still feel slow or vision API cost becomes an issue, consider these i
 - In-process `llm_client` (no Python/LiteLLM cold start per call)
 - In-process file-content cache (date/USDF retries reuse extraction)
 - Default pages 1–2 (cover + content) for text and vision
-- Fast non-reasoning default model; vision `detail: low`; JPEG page renders
+- Fast non-reasoning default model; vision `detail: high` (override `LLM_IMAGE_DETAIL=low` for cheap bulk); JPEG page renders
 - Title/vendor/type dedupe for shorter filenames
 - Slim fact-only extraction prompt; naming grammar owned by code
+- Vision `detail: high` by default (phone photos of stamped job forms need it; `LLM_IMAGE_DETAIL=low` to cheapen)
+- Image inputs: extract from original photo, convert to PDF only for the renamed output
 
 **Next candidates if still slow or expensive:**
 

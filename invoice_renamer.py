@@ -53,13 +53,21 @@ CONVERTIBLE_EXTENSIONS = CONVERTIBLE_IMAGE_EXTENSIONS + CONVERTIBLE_DOC_EXTENSIO
 # Fact-extraction prompt — keep short; assembly policy lives in code.
 INVOICE_EXTRACTION_PROMPT = """Extract facts from this document as JSON. Do NOT invent a filename — code builds it from these fields.
 Priority facts: short Vendor, Type, short Account id, Date. Keep values SHORT and recognizable.
+Ground every field in text you can actually see. If a field is unreadable or absent, use null (or
+"Unknown" only for business_name) — never guess a common chain, brand, or date that is not on the page.
 
-1. business_name — short brand, not legal entity (max ~3–4 words):
+1. business_name — short brand of the ISSUER/vendor, not legal entity (max ~3–4 words):
    Amex not American Express; BofA not Bank of America; Chase not JPMorgan Chase Bank N.A.
    Store cards → store name; co-brand when prominent (JetBlue); parent if more recognizable (Tesla).
    Dual brand / rebrand: "Local DBA, A Parent Company" → Parent (e.g. Paraco not Advantage Propane).
-   Prefer remit-to payee, logo brand, and website domain (paracogas.com → Paraco) over a lone office/DBA line.
+   Prefer remit-to payee, logo brand, letterhead stamp, and website domain (paracogas.com → Paraco)
+   over a lone office/DBA line.
    Government: IRS, SSA, Medicare, USPS, NJ DMV, township name. Else top-of-page short name.
+   NEVER the customer / "NAME" / bill-to / sold-to field — that is the client, not the vendor.
+   On phone photos of multi-part job forms, trust printed/stamped letterhead over handwriting.
+   Ampersand initials (A&L, B&G): spell each letter carefully — I and L are easy to confuse.
+   Do NOT invent brands (Midas, Jiffy Lube, national chains, banks, etc.) when the letterhead is
+   blurry — return "Unknown" instead of a confident wrong guess.
 
 2. document_type — REQUIRED, exactly ONE of:
    Invoice | Quote | Statement | Receipt | Confirmation | Notice | Letter | Report |
@@ -69,10 +77,12 @@ Priority facts: short Vendor, Type, short Account id, Date. Keep values SHORT an
    - Receipt for proof of payment / "payment received"
    - Quote for estimates/proposals not yet requesting payment
    - Report only if the document explicitly says report
+   - "JOB INVOICE" / "Job Invoice" form title → Invoice (document_title null, not "Job")
 
 3. invoice_date — YYYY-MM-DD when visible (check content pages, not only cover).
    Receipts: transaction date. Invoices/statements: invoice/statement/bill date.
    Notices/forms: header date or tax/form year. Always extract if visible.
+   Handwritten M/D/YY near the DATE label: two-digit year → 20YY (e.g. 7/1/26 → 2026-07-01).
 
 4. invoice_number — short doc ref only (Invoice #, Bill #, Case #, Permit #). null if none.
    Never full account/card numbers.
@@ -1005,6 +1015,10 @@ def clean_filename(text, limit_words=None):
     cleaned = re.sub(r'\s+', ' ', cleaned)        # Normalize whitespace
     cleaned = cleaned.strip()                     # Remove leading/trailing space
 
+    # Collapse single-letter initials around & so "A & L Pool Service" is 3 words
+    # (not 5). Bare "&" as its own token also blows the business_name word cap.
+    cleaned = re.sub(r'\b([A-Za-z])\s*&\s*([A-Za-z])\b', r'\1&\2', cleaned)
+
     # Convert to proper capitalization if text is mostly uppercase
     # Skip titlecase for short names (likely acronyms like USAA, IBM, etc.)
     letter_chars = [c for c in cleaned if c.isalpha()]
@@ -1573,9 +1587,15 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     original_ext = os.path.splitext(file_path)[1].lower()
     needs_conversion = original_ext in CONVERTIBLE_EXTENSIONS
 
-    # Convert to PDF if needed (images/DOCX → PDF for both LLM extraction and output)
+    # Convert to PDF if needed (images/DOCX → PDF for renamed output).
+    # Vision extraction prefers the original image when the LLM supports it, so
+    # small letterhead stamps survive (JPG→PDF→pdfimages can be fine, but direct
+    # vision on the photo avoids an extra re-encode hop).
     temp_pdf_path = None
     processing_file = file_path
+    # Exts llm_client can feed to vision without conversion (HEIC needs PDF hop)
+    direct_vision_exts = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif'}
+    extract_from_original_image = original_ext in direct_vision_exts
 
     if needs_conversion:
         logger.info(f"Converting {original_ext} to PDF before processing")
@@ -1587,9 +1607,12 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
         if is_temp:
             temp_pdf_path = converted_path
 
-    # Extract and sanitize information from the (possibly converted) file
+    # Extract from original photo when possible; otherwise from the PDF/DOCX path
     filename_hint = _original_filename_hint(file_path)
-    info = extract_invoice_info(processing_file, all_pages=all_pages, filename_hint=filename_hint)
+    extraction_file = file_path if extract_from_original_image else processing_file
+    if extract_from_original_image and extraction_file != processing_file:
+        logger.info(f"Extracting facts from original image: {os.path.basename(extraction_file)}")
+    info = extract_invoice_info(extraction_file, all_pages=all_pages, filename_hint=filename_hint)
     # Filename hint safety net — recover qualifier if the model left it null
     _apply_filename_hint_fallback(info, filename_hint)
     _sanitize_document_fields(info)

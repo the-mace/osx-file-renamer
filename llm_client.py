@@ -62,8 +62,19 @@ ENV_FILE_PATH = "~/.env"
 # Non-reasoning models are much faster for structured JSON extraction
 DEFAULT_MODEL = "xai/grok-4.20-0309-non-reasoning"
 VISION_MODEL = "xai/grok-4.20-0309-non-reasoning"
-# "low" is faster/cheaper; page headers rarely need high-detail tokens
-IMAGE_DETAIL = "low"
+# "high" is required for phone photos of forms (small letterhead stamps, faint print).
+# "low" misreads vendor names on hard images (e.g. red A&L stamp → random auto shop).
+# Override with LLM_IMAGE_DETAIL=low for cheaper bulk runs on clean digital PDFs.
+IMAGE_DETAIL = "high"
+
+
+def _resolve_image_detail() -> str:
+    """Vision image detail: LLM_IMAGE_DETAIL env (low|high) or IMAGE_DETAIL default."""
+    raw = (os.getenv("LLM_IMAGE_DETAIL") or IMAGE_DETAIL or "high").strip().lower()
+    if raw in ("low", "high"):
+        return raw
+    return "high"
+
 
 # Supported file extensions
 IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif']
@@ -196,7 +207,7 @@ def process_image_file(file_path: str, mime_type: Optional[str] = None) -> Dict[
             "type": "image_url",
             "image_url": {
                 "url": f"data:{mime_type or 'image/jpeg'};base64,{base64_data}",
-                "detail": IMAGE_DETAIL
+                "detail": _resolve_image_detail()
             }
         }
     except Exception as e:
@@ -486,7 +497,7 @@ def convert_pdf_to_images(file_path, max_pages=DEFAULT_MAX_PAGES):
                 "type": "image_url",
                 "image_url": {
                     "url": f"data:image/jpeg;base64,{base64_data}",
-                    "detail": IMAGE_DETAIL
+                    "detail": _resolve_image_detail()
                 }
             })
 
