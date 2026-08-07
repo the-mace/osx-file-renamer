@@ -433,6 +433,87 @@ class TestRenameInvoiceAccountNumberValidation:
         assert expected.exists()
 
     @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_fidelity_report_investment_title_coerced_to_statement(
+        self, mock_extract, tmp_path
+    ):
+        """Report + title Investment must not yield 'Investment Investment'."""
+        test_file = tmp_path / "Statement07312026-2.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'Fidelity',
+            'document_type': 'Report',
+            'document_title': 'Investment',
+            'invoice_date': '2026-07-31',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'Investment',
+            'account_last_4': '9894',
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "Fidelity Investment Statement 9894 20260731.pdf"
+        assert expected.exists()
+        assert not (tmp_path / "Fidelity Investment Investment 9894 20260731.pdf").exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_fidelity_ira_report_investment_title_coerced_to_statement(
+        self, mock_extract, tmp_path
+    ):
+        """IRA account with title Investment must become IRA Statement."""
+        test_file = tmp_path / "Statement07312026-3.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'Fidelity',
+            'document_type': 'Report',
+            'document_title': 'Investment',
+            'invoice_date': '2026-07-31',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'IRA',
+            'account_last_4': '3906',
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "Fidelity IRA Statement 3906 20260731.pdf"
+        assert expected.exists()
+        assert not (tmp_path / "Fidelity IRA Investment 3906 20260731.pdf").exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_fidelity_portfolio_report_investment_title_coerced_to_statement(
+        self, mock_extract, tmp_path
+    ):
+        """Portfolio overview with title Investment must become Portfolio Statement."""
+        test_file = tmp_path / "Statement07312026.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'Fidelity',
+            'document_type': 'Report',
+            'document_title': 'Investment',
+            'invoice_date': '2026-07-31',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'Portfolio',
+            'account_last_4': None,
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "Fidelity Portfolio Statement 20260731.pdf"
+        assert expected.exists()
+        assert not (tmp_path / "Fidelity Portfolio Investment 20260731.pdf").exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_business_investment_account_abbreviated(self, mock_extract, tmp_path):
         """Verbose BofA product name normalizes to Investment."""
         test_file = tmp_path / "test.pdf"

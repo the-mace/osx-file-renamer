@@ -613,6 +613,178 @@ class TestRenameInvoiceConversion:
         filename, _ = _build_filename_parts(fields, '.pdf')
         assert filename == 'Alaska Cruise Itinerary 20260718.pdf'
 
+    def test_statement_date_prefers_label_over_period_range(self):
+        """Labeled Statement Date beats billing-period end; period start still corrected."""
+        from invoice_renamer import (
+            _parse_statement_period_end,
+            _parse_labeled_statement_date,
+            _prefer_statement_date_from_pdf,
+        )
+
+        assert _parse_statement_period_end(
+            "Client Account Statement\n01 Jul 2026 - 31 Jul 2026\nAccount #: 5291427350"
+        ) == "2026-07-31"
+        assert _parse_statement_period_end(
+            "INVESTMENT REPORT\nJuly 1, 2026 - July 31, 2026\n\nFIDELITY ACCOUNT"
+        ) == "2026-07-31"
+        assert _parse_statement_period_end(
+            "Statement Period: 7/1/2026 – 7/31/2026\n"
+        ) == "2026-07-31"
+        assert _parse_statement_period_end(
+            "Period 2026-07-01 to 2026-07-31\n"
+        ) == "2026-07-31"
+        # Labeled Statement Date (Tesla SolarPPA)
+        assert _parse_labeled_statement_date(
+            "Statement Date: 08/05/2026\nSolarPPA Statement\n"
+            "Current Charges: 2,168.120 kWh @ $0.1420/kWh\n7/1/26 - 7/31/26\n"
+        ) == "2026-08-05"
+        # Due Date must not match as Statement Date
+        assert _parse_labeled_statement_date(
+            "Due Date: 09/05/2026\nTotal Amount Due By 09/05/2026\n"
+        ) is None
+
+        # Fidelity crypto: model used period start → correct to end
+        info = {
+            'document_type': 'Statement',
+            'account_type': 'Crypto',
+            'invoice_date': '2026-07-01',
+        }
+        with patch(
+            'invoice_renamer._pdf_text_head',
+            return_value="Client Account Statement\n01 Jul 2026 - 31 Jul 2026\n",
+        ):
+            _prefer_statement_date_from_pdf(info, '/tmp/crypto.pdf')
+        assert info['invoice_date'] == '2026-07-31'
+
+        # Tesla: Statement Date + usage range — keep labeled date, not period end
+        tesla = {
+            'document_type': 'Statement',
+            'account_type': None,
+            'invoice_date': '2026-08-05',
+        }
+        tesla_text = (
+            "Statement Date: 08/05/2026\nSolarPPA Statement\n"
+            "Total Amount Due by 09/05/2026\n"
+            "Current Charges: 2,168.120 kWh @ $0.1420/kWh\n7/1/26 - 7/31/26\n"
+        )
+        with patch('invoice_renamer._pdf_text_head', return_value=tesla_text):
+            _prefer_statement_date_from_pdf(tesla, '/tmp/tesla.pdf')
+        assert tesla['invoice_date'] == '2026-08-05'
+
+        # Tesla wrong model date (period end) → labeled Statement Date wins
+        tesla_wrong = {
+            'document_type': 'Statement',
+            'account_type': None,
+            'invoice_date': '2026-07-31',
+        }
+        with patch('invoice_renamer._pdf_text_head', return_value=tesla_text):
+            _prefer_statement_date_from_pdf(tesla_wrong, '/tmp/tesla.pdf')
+        assert tesla_wrong['invoice_date'] == '2026-08-05'
+
+        # Non-statements without account type are left alone
+        invoice_info = {
+            'document_type': 'Invoice',
+            'account_type': None,
+            'invoice_date': '2026-07-01',
+        }
+        with patch(
+            'invoice_renamer._pdf_text_head',
+            return_value="01 Jul 2026 - 31 Jul 2026",
+        ):
+            _prefer_statement_date_from_pdf(invoice_info, '/tmp/inv.pdf')
+        assert invoice_info['invoice_date'] == '2026-07-01'
+
+    def test_fidelity_report_investment_title_becomes_statement(self):
+        """Brokerage period PDFs mislabeled Report + title Investment → Statement.
+
+        Real failures (2026-08-07):
+          Fidelity Investment Investment 9894 …
+          Fidelity IRA Investment 3906 …
+          Fidelity Portfolio Investment …
+        Expected: … Investment/IRA/Portfolio Statement …
+        """
+        from invoice_renamer import (
+            _sanitize_document_fields,
+            _clean_and_validate_fields,
+            _build_filename_parts,
+        )
+
+        cases = [
+            (
+                {
+                    'business_name': 'Fidelity',
+                    'document_type': 'Report',
+                    'document_title': 'Investment',
+                    'invoice_date': '2026-07-31',
+                    'invoice_number': None,
+                    'patient_animal_name': None,
+                    'account_type': 'Investment',
+                    'account_last_4': '9894',
+                    'usdf_test_name': None,
+                    'usdf_rider_number': None,
+                    'usdf_rider_name': None,
+                },
+                'Fidelity Investment Statement 9894 20260731.pdf',
+            ),
+            (
+                {
+                    'business_name': 'Fidelity',
+                    'document_type': 'Report',
+                    'document_title': 'Investment',
+                    'invoice_date': '2026-07-31',
+                    'invoice_number': None,
+                    'patient_animal_name': None,
+                    'account_type': 'IRA',
+                    'account_last_4': '3906',
+                    'usdf_test_name': None,
+                    'usdf_rider_number': None,
+                    'usdf_rider_name': None,
+                },
+                'Fidelity IRA Statement 3906 20260731.pdf',
+            ),
+            (
+                {
+                    'business_name': 'Fidelity',
+                    'document_type': 'Report',
+                    'document_title': 'Investment',
+                    'invoice_date': '2026-07-31',
+                    'invoice_number': None,
+                    'patient_animal_name': None,
+                    'account_type': 'Portfolio',
+                    'account_last_4': None,
+                    'usdf_test_name': None,
+                    'usdf_rider_number': None,
+                    'usdf_rider_name': None,
+                },
+                'Fidelity Portfolio Statement 20260731.pdf',
+            ),
+            (
+                # document_type itself is the account category
+                {
+                    'business_name': 'Fidelity',
+                    'document_type': 'Investment',
+                    'document_title': None,
+                    'invoice_date': '2026-07-31',
+                    'invoice_number': None,
+                    'patient_animal_name': None,
+                    'account_type': None,
+                    'account_last_4': '9894',
+                    'usdf_test_name': None,
+                    'usdf_rider_number': None,
+                    'usdf_rider_name': None,
+                },
+                'Fidelity Investment Statement 9894 20260731.pdf',
+            ),
+        ]
+
+        for info, expected_name in cases:
+            _sanitize_document_fields(info)
+            assert info['document_type'] == 'Statement'
+            assert info.get('document_title') in (None, '')
+            fields = _clean_and_validate_fields(info)
+            filename, _ = _build_filename_parts(fields, '.pdf')
+            assert filename == expected_name
+
     def test_original_filename_hint_splits_camelcase_and_dates(self):
         """Filename hints should be human-readable (camelCase + date stripped)."""
         from invoice_renamer import _original_filename_hint

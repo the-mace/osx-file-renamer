@@ -73,14 +73,23 @@ Ground every field in text you can actually see. If a field is unreadable or abs
    Invoice | Quote | Statement | Receipt | Confirmation | Notice | Letter | Report |
    Form | Contract | Policy | Certificate | Permit | Map | Itinerary | Test
    - Statement if "statement" is prominent (not Report)
+   - Brokerage / IRA / investment / portfolio / crypto account period summaries → Statement
+     (not Report, not document_title "Investment"). Product names like "Investment Report"
+     or "Account Summary" for a dated account statement are still Statement.
    - Confirmation for trade/order/booking confirmations (not Receipt)
    - Receipt for proof of payment / "payment received"
    - Quote for estimates/proposals not yet requesting payment
-   - Report only if the document explicitly says report
+   - Report only if the document explicitly says report AND is not a bank/brokerage statement
    - "JOB INVOICE" / "Job Invoice" form title → Invoice (document_title null, not "Job")
+   - Never put account categories (Investment, IRA, Portfolio, Checking, …) in document_type
 
 3. invoice_date — YYYY-MM-DD when visible (check content pages, not only cover).
-   Receipts: transaction date. Invoices/statements: invoice/statement/bill date.
+   Receipts: transaction date. Invoices: invoice/bill date.
+   Statements (priority order):
+     1) Labeled Statement Date / As of / Bill Date when present (e.g. "Statement Date: 08/05/2026")
+     2) Else period END of a billing range — never the period start
+        ("01 Jul 2026 - 31 Jul 2026" or "7/1/26 - 7/31/26" → 2026-07-31)
+     Do not use Due Date or payment dates as invoice_date.
    Notices/forms: header date or tax/form year. Always extract if visible.
    Handwritten M/D/YY near the DATE label: two-digit year → 20YY (e.g. 7/1/26 → 2026-07-01).
 
@@ -114,6 +123,8 @@ Ground every field in text you can actually see. If a field is unreadable or abs
    null when Vendor + type is enough (routine invoice, receipt, itinerary, plain bank/CC/toll statement).
    Do not restate the type ("Invoice Document", "Travel Itinerary" → null). Max 5 words, title case.
    Do not repeat vendor words. Do not invent a premise label that is not on the document.
+   Never use account categories as document_title (Investment, IRA, Portfolio, Checking,
+   Brokerage, Crypto, …) — put those only in account_type.
 
 9. USDF dressage scorecards only (else all three null). Set document_type to "Test":
    - usdf_test_name: omit the word "Level" — e.g. "USDF Introductory A", "USDF Training 1",
@@ -496,11 +507,61 @@ def send_notification(title, message):
 # Focused date extraction prompt
 DATE_EXTRACTION_PROMPT = """Look carefully at this document and find the date.
 For receipts: Look for the transaction date/time near the top (may be in the header, labeled "Date", or near business info).
-For invoices/statements: Look for "Invoice Date", "Statement Date", "Bill Date", etc.
+For invoices: Look for "Invoice Date", "Bill Date", etc.
+For statements (priority order):
+  1) Labeled Statement Date / As of / Bill Date when present (e.g. "Statement Date: 08/05/2026")
+  2) Else the period END of a billing range — never the period start
+     ("01 Jul 2026 - 31 Jul 2026" → 2026-07-31). Do not use Due Date.
 For notices/letters: Look for the date at the top of the document.
 
 Return ONLY the date in YYYY-MM-DD format. If you see a date like "11/3/25", interpret it as MM/DD/YY and convert to YYYY-MM-DD (e.g., "2025-11-03").
 If no date is visible, return "NONE"."""
+
+# Explicit statement/as-of/bill dates beat billing-period ranges (Tesla SolarPPA etc.)
+_LABELED_STATEMENT_DATE_RE = re.compile(
+    r'(?:statement\s*date|as\s*of(?:\s*date)?|bill\s*date)\s*[:\-]?\s*'
+    r'(?P<date>'
+    r'\d{1,2}/\d{1,2}/\d{2,4}'
+    r'|\d{4}-\d{2}-\d{2}'
+    r'|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}'
+    r'|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}'
+    r')',
+    re.IGNORECASE,
+)
+
+# Statement period ranges near the header (Fidelity, banks). End date is the fallback filename date.
+_PERIOD_RANGE_RES = (
+    # 01 Jul 2026 - 31 Jul 2026  |  1 July 2026 to 31 July 2026
+    re.compile(
+        r'(?P<start>\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})\s*(?:[-–—]|to)\s*'
+        r'(?P<end>\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})',
+        re.IGNORECASE,
+    ),
+    # July 1, 2026 - July 31, 2026  |  Jul 1 2026 – Jul 31 2026
+    re.compile(
+        r'(?P<start>[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})\s*(?:[-–—]|to)\s*'
+        r'(?P<end>[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})',
+        re.IGNORECASE,
+    ),
+    # 7/1/2026 - 7/31/2026  |  07/01/26 – 07/31/26
+    re.compile(
+        r'(?P<start>\d{1,2}/\d{1,2}/\d{2,4})\s*(?:[-–—]|to)\s*'
+        r'(?P<end>\d{1,2}/\d{1,2}/\d{2,4})',
+    ),
+    # 2026-07-01 - 2026-07-31
+    re.compile(
+        r'(?P<start>\d{4}-\d{2}-\d{2})\s*(?:[-–—]|to)\s*'
+        r'(?P<end>\d{4}-\d{2}-\d{2})',
+    ),
+)
+_PERIOD_DATE_FORMATS = (
+    "%Y-%m-%d",
+    "%m/%d/%Y", "%m/%d/%y",
+    "%d/%m/%Y", "%d/%m/%y",
+    "%B %d, %Y", "%b %d, %Y",
+    "%B %d %Y", "%b %d %Y",
+    "%d %B %Y", "%d %b %Y",
+)
 
 
 USDF_PAGE2_PROMPT = """This image is the front cover of a USDF/USEF dressage test booklet. Extract:
@@ -900,6 +961,154 @@ def _find_pdftoppm():
         return None
 
 
+def _find_pdftotext():
+    """Find pdftotext command in common locations"""
+    for path in ['/opt/homebrew/bin/pdftotext', '/usr/bin/pdftotext', '/usr/local/bin/pdftotext']:
+        if os.path.exists(path):
+            return path
+    try:
+        result = subprocess.run(['which', 'pdftotext'], capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return None
+
+
+def _parse_loose_date_token(token):
+    """Parse a single date token from a period range into YYYY-MM-DD, or None."""
+    if not token:
+        return None
+    cleaned = re.sub(r'\s+', ' ', str(token).strip())
+    for fmt in _PERIOD_DATE_FORMATS:
+        try:
+            return datetime.strptime(cleaned, fmt).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_labeled_statement_date(text):
+    """Return labeled Statement Date / As of / Bill Date as YYYY-MM-DD, or None.
+
+    Explicit labels beat billing-period ranges. Does not match Due Date.
+    """
+    if not text:
+        return None
+    head = text[:2500]
+    match = _LABELED_STATEMENT_DATE_RE.search(head)
+    if not match:
+        return None
+    return _parse_loose_date_token(match.group('date'))
+
+
+def _parse_statement_period_range(text):
+    """Return (start, end) as YYYY-MM-DD from a header period range, or (None, None).
+
+    Models often return the range start (e.g. 2026-07-01 for "01 Jul 2026 - 31 Jul 2026").
+    When no labeled Statement Date exists, filenames should use the period end.
+    """
+    if not text:
+        return None, None
+    # Header area only — avoid incidental ranges deeper in the document
+    head = text[:2500]
+    for pattern in _PERIOD_RANGE_RES:
+        match = pattern.search(head)
+        if not match:
+            continue
+        start = _parse_loose_date_token(match.group('start'))
+        end = _parse_loose_date_token(match.group('end'))
+        if not end:
+            continue
+        if start and end < start:
+            continue
+        return start, end
+    return None, None
+
+
+def _parse_statement_period_end(text):
+    """Return statement period END as YYYY-MM-DD from header range text, or None."""
+    _, end = _parse_statement_period_range(text)
+    return end
+
+
+def _pdf_text_head(file_path, max_pages=1):
+    """Extract text from the first page(s) of a PDF via pdftotext, or None."""
+    if not file_path or not str(file_path).lower().endswith('.pdf'):
+        return None
+    if not os.path.exists(file_path):
+        return None
+    pdftotext_cmd = _find_pdftotext()
+    if not pdftotext_cmd:
+        return None
+    try:
+        result = subprocess.run(
+            [pdftotext_cmd, '-f', '1', '-l', str(max_pages), '-layout', file_path, '-'],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        text = (result.stdout or '').strip()
+        return text or None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _prefer_statement_date_from_pdf(info, file_path):
+    """Refine statement invoice_date from PDF header text.
+
+    Priority:
+      1) Labeled Statement Date / As of / Bill Date (Tesla SolarPPA etc.)
+      2) Period END — only when missing, or when the model used the period start
+         (Fidelity "01 Jul 2026 - 31 Jul 2026" → 2026-07-31)
+
+    Never override a non-start date with period end when a usage/billing range is
+    present alongside a later Statement Date.
+    """
+    logger = logging.getLogger(__name__)
+    if not info or not file_path:
+        return
+    dtype = str(info.get('document_type') or '').strip().lower()
+    account_type = info.get('account_type')
+    is_financial_statement = (
+        dtype in ('statement', 'report')
+        or _is_account_category_label(dtype)
+        or (account_type and _is_account_category_label(account_type))
+    )
+    if not is_financial_statement:
+        return
+
+    text = _pdf_text_head(file_path)
+    if not text:
+        return
+
+    current = info.get('invoice_date')
+    labeled = _parse_labeled_statement_date(text)
+    if labeled:
+        if current != labeled:
+            logger.info(
+                f"Preferring labeled statement date {labeled} over extracted date {current!r}"
+            )
+            info['invoice_date'] = labeled
+        return
+
+    period_start, period_end = _parse_statement_period_range(text)
+    if not period_end:
+        return
+
+    # Missing date → use period end
+    if not current:
+        logger.info(f"Using statement period end {period_end} (no date extracted)")
+        info['invoice_date'] = period_end
+        return
+
+    # Model used period start → correct to end (crypto Fidelity case)
+    if period_start and current == period_start and current != period_end:
+        logger.info(
+            f"Preferring statement period end {period_end} over period start {current!r}"
+        )
+        info['invoice_date'] = period_end
+
+
 def _extract_usdf_page2_rotated(pdf_path):
     """Extract page 2 from a USDF scorecard PDF, rotate 90° CCW, return temp JPEG path.
 
@@ -988,6 +1197,9 @@ def extract_invoice_info(file_path, all_pages=False, filename_hint=None):
             current_date = datetime.now().strftime("%Y-%m-%d")
             parsed_info['invoice_date'] = current_date
             logger.info(f"No date detected, using current date as fallback: {current_date}")
+
+    # Statements: labeled Statement Date beats period range; else fix period-start picks.
+    _prefer_statement_date_from_pdf(parsed_info, file_path)
 
     # Validate and log warnings
     _validate_invoice_data(parsed_info)
@@ -1191,6 +1403,93 @@ def _should_drop_premise_qualifier(info):
     return False
 
 
+def _is_account_category_label(value):
+    """True if value is a bank/brokerage account category, not a document type/title.
+
+    Models often put Investment / IRA / Portfolio in document_type or document_title
+    instead of account_type, which produces names like
+    "Fidelity Investment Investment 9894 …" instead of "Fidelity Investment Statement …".
+    """
+    if value is None:
+        return False
+    label = str(value).strip().lower()
+    if not label:
+        return False
+    if label in _BANK_STYLE_ACCOUNT_TYPES or label in _FILENAME_ACCOUNT_WORDS:
+        return True
+    # Verbose product names that normalize to Investment via FILENAME_ABBREVIATIONS
+    if re.match(r'^(?:business\s+)?investment(?:\s+account)?$', label):
+        return True
+    return False
+
+
+def _normalize_financial_statement_fields(info):
+    """Code-owned fixes when the model confuses Statement vs Report vs account labels.
+
+    Observed Fidelity failures:
+      type=Report title=Investment account=Investment → Fidelity Investment Investment …
+      type=Report title=Investment account=IRA → Fidelity IRA Investment …
+      type=Report title=Investment account=Portfolio → Fidelity Portfolio Investment …
+    Expected:
+      Fidelity Investment Statement … / Fidelity IRA Statement … / Fidelity Portfolio Statement …
+    """
+    logger = logging.getLogger(__name__)
+    raw_type = info.get('document_type')
+    dtype = str(raw_type).strip() if raw_type else ''
+    dtype_l = dtype.lower()
+    account_type = info.get('account_type')
+    account_l = str(account_type).strip().lower() if account_type else ''
+    title = _raw_qualifier(info)
+    title_l = title.strip().lower() if title else ''
+
+    # document_type is an account category (e.g. "Investment") → Statement + promote
+    if dtype and _is_account_category_label(dtype):
+        logger.info(
+            f"Coercing document_type {dtype!r} → Statement "
+            f"(account category, not a document type)"
+        )
+        if not account_type:
+            info['account_type'] = dtype
+            account_type = dtype
+            account_l = dtype.lower()
+        info['document_type'] = 'Statement'
+        dtype_l = 'statement'
+
+    # Dated bank/brokerage account summaries mislabeled as Report → Statement
+    if dtype_l == 'report' and account_type and _is_account_category_label(account_type):
+        logger.info(
+            f"Coercing document_type Report → Statement "
+            f"(account_type={account_type!r})"
+        )
+        info['document_type'] = 'Statement'
+        dtype_l = 'statement'
+
+    # Account-category document_title is not a qualifier — drop (or promote if no account_type)
+    if title_l and _is_account_category_label(title):
+        if not account_type:
+            info['account_type'] = title.strip()
+            logger.info(
+                f"Promoted account-category document_title {title!r} → account_type; "
+                f"cleared document_title"
+            )
+        else:
+            logger.info(
+                f"Dropped account-category document_title {title!r} "
+                f"(account_type={account_type!r})"
+            )
+        info['document_title'] = None
+        if 'qualifier' in info:
+            info['qualifier'] = None
+        title_l = ''
+
+    # Title that merely restates account_type is redundant
+    if title_l and account_l and title_l == account_l:
+        logger.info(f"Dropped document_title {title!r} (restates account_type)")
+        info['document_title'] = None
+        if 'qualifier' in info:
+            info['qualifier'] = None
+
+
 def _sanitize_document_fields(info):
     """Sanitize account and invoice fields based on document type"""
     logger = logging.getLogger(__name__)
@@ -1198,6 +1497,10 @@ def _sanitize_document_fields(info):
     for key in info:
         if info[key] == "null":
             info[key] = None
+
+    # Fix Statement/Report/account-label confusions before account-detail stripping
+    # (so type=Investment is coerced to Statement and keeps last-4 / account_type).
+    _normalize_financial_statement_fields(info)
 
     # Only include account details for document types that reference financial accounts
     account_detail_types = ['Statement', 'Report', 'Notice', 'Letter', 'Policy', 'Contract']
