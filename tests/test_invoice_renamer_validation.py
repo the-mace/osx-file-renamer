@@ -556,8 +556,34 @@ class TestRenameInvoiceAccountNumberValidation:
         result = rename_invoice(str(test_file))
 
         assert result is True
-        expected = tmp_path / "Vendor Invoice ACS12B4 20240115.pdf"
+        # ACS-12B4 → ACS12B4 (7 chars) → last 4 only: 12B4
+        expected = tmp_path / "Vendor Invoice 12B4 20240115.pdf"
         assert expected.exists()
+        # Case-sensitive check (macOS default FS is case-insensitive for .exists())
+        assert expected.name == list(tmp_path.iterdir())[0].name
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_hyphenated_invoice_reference(self, mock_extract, tmp_path):
+        """Long hyphenated invoice refs keep last 4 alnum only (not first-8 prefix)."""
+        test_file = tmp_path / "test.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'xAI',
+            'document_type': 'Invoice',
+            'invoice_date': '2026-08-07',
+            'invoice_number': 'J3T9-LNGU-6LYJ',
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        names = [p.name for p in tmp_path.iterdir()]
+        assert names == ['xAI Invoice 6LYJ 20260807.pdf']
 
     @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_amex_abbreviation(self, mock_extract, tmp_path):

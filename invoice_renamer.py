@@ -161,7 +161,9 @@ FILENAME_ABBREVIATIONS = [
     (re.compile(r'^Social Security Administration$', re.IGNORECASE), 'SSA'),
     (re.compile(r'^Internal Revenue Service$', re.IGNORECASE), 'IRS'),
 ]
-MAX_ACCOUNT_ID_LEN = 8  # longer ids look like full account numbers — trim to last 4
+MAX_ACCOUNT_ID_LEN = 8  # longer account ids look like full numbers — trim to last 4
+# Filename ref slot is last-4 only (low PII); longer invoice/doc ids collapse the same way
+REF_ID_DISPLAY_LEN = 4
 
 # Original filenames that are camera/scanner defaults or bare numbers carry no useful signal
 GENERIC_FILENAME_PATTERNS = [
@@ -171,6 +173,11 @@ GENERIC_FILENAME_PATTERNS = [
 # Continuous hex runs this long usually mean CDN/email attachment hashes, not document titles.
 # Shorter runs alone are too common in real names (e.g. partial account ids).
 _FILENAME_HEX_RUN_MIN = 24
+# Opaque base64/base64url download tokens are often this long with mixed case + digits
+_FILENAME_OPAQUE_TOKEN_MIN = 24
+# Max consecutive letters in a real TitleCase word blob (TradeConfirmation = 18).
+# Opaque tokens fragment into short letter runs broken by digits (Wydwcs=6, RTH=3).
+_FILENAME_OPAQUE_MAX_LETTER_RUN = 10
 # Pure-hex token (only 0-9a-f) — leftover from splitting hash basenames (dcd, cdfd, cda, dae)
 _FILENAME_PURE_HEX_TOKEN_RE = re.compile(r'^[0-9a-fA-F]+$')
 # Letters outside the hex alphabet indicate real words (Trade, Raven, Tax, …)
@@ -279,13 +286,28 @@ def _strip_filename_date_tokens(name):
     return name.strip()
 
 
+def _max_consecutive_letter_run(text):
+    """Length of the longest run of consecutive A–Z letters (any case)."""
+    max_run = 0
+    cur = 0
+    for ch in text:
+        if ch.isalpha():
+            cur += 1
+            if cur > max_run:
+                max_run = cur
+        else:
+            cur = 0
+    return max_run
+
+
 def _is_hash_like_basename(raw_name):
     """True when the basename is download-tracking junk (hash/token ± account/date).
 
     Portals often name files like:
       <sha256>_<account>_<MM-DD-YYYY>.pdf
-    Splitting those on letter/digit boundaries yields pure-hex fragments (dcd, cdfd, cda)
-    that must never become document_title.
+      <base64url-token>.pdf   (e.g. Stripe/xAI invoice downloads)
+    Splitting those on letter/digit boundaries yields pure-hex or gibberish fragments
+    (dcd, cdfd, Wydwcs, RTH, bbu) that must never become document_title.
     """
     if not raw_name:
         return False
@@ -300,6 +322,20 @@ def _is_hash_like_basename(raw_name):
         len(raw_name) >= _FILENAME_HEX_RUN_MIN
         and letters_only
         and re.fullmatch(r'(?i)[a-f]+', letters_only)
+    ):
+        return True
+    # Opaque base64/base64url tokens: long dense alnum (±padding), mixed case + digits,
+    # short letter runs (no TitleCase words like TradeConfirmation / RavenInvoice).
+    # Real counterexamples keep long letter runs:
+    #   TradeConfirmation07312026 (18 letters), RavenInvoice30928720 (12 letters).
+    dense = re.sub(r'[=+/_\-]', '', raw_name)
+    if (
+        len(dense) >= _FILENAME_OPAQUE_TOKEN_MIN
+        and re.fullmatch(r'[A-Za-z0-9]+', dense)
+        and any(c.isdigit() for c in dense)
+        and any(c.isupper() for c in dense)
+        and any(c.islower() for c in dense)
+        and _max_consecutive_letter_run(dense) <= _FILENAME_OPAQUE_MAX_LETTER_RUN
     ):
         return True
     return False
@@ -1291,24 +1327,26 @@ def _normalize_account_id(value):
 
 
 def _normalize_invoice_number(value):
-    """Normalize invoice/doc reference: short alphanumeric OK; long digit strings → last 4."""
+    """Normalize invoice/doc reference for the filename slot: last 4 only when long.
+
+    Same low-PII policy as account ids: short refs stay intact; anything longer
+    than REF_ID_DISPLAY_LEN keeps only the last 4 alnum characters (preserve case).
+
+    Historical bug: mixed alnum longer than MAX_ACCOUNT_ID_LEN used the *first*
+    8 chars (J3T9-LNGU-6LYJ → J3T9LNGU → titlecased J3t9lngu). Digits-only long
+    strings already used last 4; alnum now matches.
+    """
     if not value or value == "null":
         return None
     # Allow hyphen in middle of id then strip for safety — keep alnum only for FS
     cleaned = re.sub(r'[^A-Za-z0-9]', '', str(value))
     if not cleaned:
         return None
-    if cleaned.isdigit():
-        if len(cleaned) < 2:
-            return None
-        # Long pure-digit refs look like account numbers — last 4 only
-        if len(cleaned) > MAX_ACCOUNT_ID_LEN:
-            return cleaned[-4:]
-        return cleaned
-    if len(cleaned) > MAX_ACCOUNT_ID_LEN:
-        return cleaned[:MAX_ACCOUNT_ID_LEN]
     if len(cleaned) < 2:
         return None
+    # Filename ref is last-4 when longer than a short id
+    if len(cleaned) > REF_ID_DISPLAY_LEN:
+        return cleaned[-REF_ID_DISPLAY_LEN:]
     return cleaned
 
 
@@ -1532,10 +1570,8 @@ def _clean_and_validate_fields(info):
     document_title = clean_filename(raw_title, limit_words=5) if raw_title else None
     invoice_date = format_date(info.get('invoice_date'))
 
-    # Process invoice number (short alphanumeric OK; long digit strings trimmed)
+    # Process invoice number (already FS-safe alnum; do not titlecase — IDs keep case)
     invoice_number = _normalize_invoice_number(info.get('invoice_number'))
-    if invoice_number:
-        invoice_number = clean_filename(invoice_number)
 
     # Process patient/animal name
     patient_animal_name = clean_filename(info.get('patient_animal_name')) if info.get('patient_animal_name') else None
@@ -1543,14 +1579,13 @@ def _clean_and_validate_fields(info):
     # Process account type
     account_type = clean_filename(info.get('account_type')) if info.get('account_type') else None
 
-    # Process account identifier (last 4 digits or short alphanumeric — low PII)
+    # Process account identifier (last 4 digits or short alphanumeric — low PII).
+    # Already FS-safe; skip clean_filename so mixed-case alnum ids are not titlecased.
     account_last_4 = _normalize_account_id(info.get('account_last_4'))
-    if account_last_4:
-        account_last_4 = clean_filename(account_last_4)
-    elif info.get('account_last_4'):
+    if not account_last_4 and info.get('account_last_4'):
         # Had a value but it was invalid/too short — drop incomplete account pair
         account_type = None
-    else:
+    if not account_last_4:
         account_last_4 = None
 
     usdf_test_name = clean_filename(info.get('usdf_test_name')) if info.get('usdf_test_name') else None

@@ -857,6 +857,59 @@ class TestRenameInvoiceConversion:
         assert _original_filename_hint('TradeConfirmation07312026.pdf') == 'Trade Confirmation'
         assert not _is_hash_like_basename('RavenInvoice30928720')
 
+    def test_original_filename_hint_rejects_base64_download_tokens(self):
+        """Base64url portal tokens must not become document_title gibberish.
+
+        Real-world xAI invoice download:
+          QtN9Wydwcs49si6WOtNAhW7v4RTH3bbu4DxSnQu2iAs=.pdf
+        Previously camelCase-split → multi-word 'topic' Wydwcs RTH Bbu.
+        """
+        from invoice_renamer import (
+            _original_filename_hint,
+            _is_hash_like_basename,
+            _apply_filename_hint_fallback,
+            _sanitize_document_fields,
+            _clean_and_validate_fields,
+            _build_filename_parts,
+            _normalize_invoice_number,
+        )
+
+        token = 'QtN9Wydwcs49si6WOtNAhW7v4RTH3bbu4DxSnQu2iAs='
+        assert _is_hash_like_basename(token)
+        assert _original_filename_hint(f'{token}.pdf') is None
+
+        info = {
+            'business_name': 'xAI',
+            'document_type': 'Invoice',
+            'document_title': None,
+            'invoice_date': '2026-08-07',
+            'invoice_number': 'J3T9-LNGU-6LYJ',
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '6510508e-a6f8-496f-b074-2cfcb2375c25',
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        _apply_filename_hint_fallback(info, _original_filename_hint(f'{token}.pdf'))
+        assert info['document_title'] is None
+        # Long mixed alnum must use last 4 (not first-8 truncate → J3T9LNGU / J3t9lngu)
+        assert _normalize_invoice_number('J3T9-LNGU-6LYJ') == '6LYJ'
+        assert _normalize_invoice_number('3359769876') == '9876'
+        assert _normalize_invoice_number('INV1') == 'INV1'  # already ≤4
+
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == 'xAI Invoice 6LYJ 20260807.pdf'
+        assert 'Wydwcs' not in filename
+        assert 'J3t9lngu' not in filename
+        assert 'J3T9LNGU' not in filename
+        # Readable names still produce hints
+        assert _original_filename_hint('TradeConfirmation07312026.pdf') == 'Trade Confirmation'
+        assert not _is_hash_like_basename('TradeConfirmation07312026')
+        assert not _is_hash_like_basename('RavenInvoice30928720')
+
     def test_filename_hint_fallback_fills_trade_confirmation_title(self):
         """When LLM leaves title null, recover 'Trade' from TradeConfirmation filename."""
         from invoice_renamer import (
@@ -1024,7 +1077,7 @@ class TestRenameInvoiceConversion:
         _sanitize_document_fields(info)
         fields = _clean_and_validate_fields(info)
         filename, _ = _build_filename_parts(fields, '.pdf')
-        assert filename == 'Paraco Invoice 980855 20260801.pdf'
+        assert filename == 'Paraco Invoice 0855 20260801.pdf'  # 980855 → last 4
         assert 'Raven' not in filename
 
         # TradeConfirmation still recovers Trade when type is Confirmation
