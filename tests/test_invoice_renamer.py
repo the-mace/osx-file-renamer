@@ -886,7 +886,7 @@ class TestRenameInvoiceConversion:
             'invoice_number': 'J3T9-LNGU-6LYJ',
             'patient_animal_name': None,
             'account_type': None,
-            'account_last_4': '6510508e-a6f8-496f-b074-2cfcb2375c25',
+            'account_last_4': None,  # no account id → filename uses invoice last-4
             'usdf_test_name': None,
             'usdf_rider_number': None,
             'usdf_rider_name': None,
@@ -950,7 +950,7 @@ class TestRenameInvoiceConversion:
         _sanitize_document_fields(info)
         fields = _clean_and_validate_fields(info)
         filename, _ = _build_filename_parts(fields, '.pdf')
-        assert filename == 'Fidelity Trade Confirmation 20260731.pdf'
+        assert filename == 'Fidelity Brokerage Trade Confirmation 9894 20260731.pdf'
 
     def test_filename_hint_fallback_ignores_conflicting_type_synonyms(self):
         """Wrong name 'Quest Billing' must not override content-based Receipt type.
@@ -1197,7 +1197,7 @@ class TestRenameInvoiceConversion:
                     'account_type': 'Brokerage',
                     'account_last_4': '9894',
                 },
-                'Fidelity Trade Confirmation 20260731.pdf',
+                'Fidelity Brokerage Trade Confirmation 9894 20260731.pdf',
             ),
             (
                 {

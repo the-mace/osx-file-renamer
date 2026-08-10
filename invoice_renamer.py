@@ -1540,8 +1540,13 @@ def _sanitize_document_fields(info):
     # (so type=Investment is coerced to Statement and keeps last-4 / account_type).
     _normalize_financial_statement_fields(info)
 
-    # Only include account details for document types that reference financial accounts
-    account_detail_types = ['Statement', 'Report', 'Notice', 'Letter', 'Policy', 'Contract']
+    # Keep account details for types that commonly reference a service/financial account.
+    # Invoice (utility/telecom) and Confirmation (trade/order) need last-4 for filing;
+    # Receipt still drops them (payment-method last-4 is noise / extra PII).
+    account_detail_types = [
+        'Statement', 'Report', 'Notice', 'Letter', 'Policy', 'Contract',
+        'Invoice', 'Confirmation',
+    ]
     if info.get('document_type') not in account_detail_types:
         info['account_type'] = None
         info['account_last_4'] = None

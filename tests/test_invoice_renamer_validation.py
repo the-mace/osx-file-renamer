@@ -61,27 +61,52 @@ class TestRenameInvoiceDocumentTypeSanitization:
         assert expected.exists()
 
     @patch('invoice_renamer.extract_invoice_info')
-    def test_rename_invoice_invoice_type_removes_account_info(self, mock_extract, tmp_path):
-        """Test that invoices don't include account info."""
+    def test_rename_invoice_invoice_type_keeps_account_last4(self, mock_extract, tmp_path):
+        """Invoices keep last-4 (utility/telecom service accounts); prefer over invoice #."""
         test_file = tmp_path / "test.pdf"
         test_file.write_text("test content")
 
         info = {
-            'business_name': 'Company',
+            'business_name': 'T-Mobile',
             'document_type': 'Invoice',
-            'invoice_date': '2024-01-15',
-            'invoice_number': '1234',
+            'invoice_date': '2026-08-06',
+            'invoice_number': '984163148',  # collapsed to last-4 only if used
             'patient_animal_name': None,
-            'account_type': 'Credit Card',  # Should be removed
-            'account_last_4': '5678'  # Should be removed
+            'account_type': None,
+            'account_last_4': '4689',
         }
         mock_extract.return_value = info
 
         result = rename_invoice(str(test_file))
 
         assert result is True
-        # Account info should not appear
-        expected = tmp_path / "Company Invoice 1234 20240115.pdf"
+        # Account last-4 wins; do not also append invoice number
+        expected = tmp_path / "T-Mobile Invoice 4689 20260806.pdf"
+        assert expected.exists()
+        assert not (tmp_path / "T-Mobile Invoice 3148 20260806.pdf").exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_confirmation_keeps_account_last4(self, mock_extract, tmp_path):
+        """Trade confirmations keep brokerage last-4 (and drop trade ref as invoice #)."""
+        test_file = tmp_path / "test.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'Fidelity',
+            'document_type': 'Confirmation',
+            'document_title': 'Trade',
+            'invoice_date': '2026-08-07',
+            'invoice_number': '26212-LQYR63',  # stripped for Confirmation
+            'patient_animal_name': None,
+            'account_type': 'Brokerage',
+            'account_last_4': '9959',
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "Fidelity Brokerage Trade Confirmation 9959 20260807.pdf"
         assert expected.exists()
 
     @patch('invoice_renamer.extract_invoice_info')
