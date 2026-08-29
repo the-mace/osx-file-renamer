@@ -86,10 +86,11 @@ Ground every field in text you can actually see. If a field is unreadable or abs
 3. invoice_date — YYYY-MM-DD when visible (check content pages, not only cover).
    Receipts: transaction date. Invoices: invoice/bill date.
    Statements (priority order):
-     1) Labeled Statement Date / As of / Bill Date when present (e.g. "Statement Date: 08/05/2026")
+     1) Labeled Statement Date / Closing Date / Bill Date when present
+        (e.g. "Statement Date: 08/05/2026", "Closing Date 08/28/26")
      2) Else period END of a billing range — never the period start
         ("01 Jul 2026 - 31 Jul 2026" or "7/1/26 - 7/31/26" → 2026-07-31)
-     Do not use Due Date or payment dates as invoice_date.
+     Do not use Due Date, payment dates, or rewards/points "as of" snapshots.
    Notices/forms: header date or tax/form year. Always extract if visible.
    Handwritten M/D/YY near the DATE label: two-digit year → 20YY (e.g. 7/1/26 → 2026-07-01).
 
@@ -545,25 +546,43 @@ DATE_EXTRACTION_PROMPT = """Look carefully at this document and find the date.
 For receipts: Look for the transaction date/time near the top (may be in the header, labeled "Date", or near business info).
 For invoices: Look for "Invoice Date", "Bill Date", etc.
 For statements (priority order):
-  1) Labeled Statement Date / As of / Bill Date when present (e.g. "Statement Date: 08/05/2026")
+  1) Labeled Statement Date / Closing Date / Bill Date when present
+     (e.g. "Statement Date: 08/05/2026", "Closing Date 08/28/26")
   2) Else the period END of a billing range — never the period start
-     ("01 Jul 2026 - 31 Jul 2026" → 2026-07-31). Do not use Due Date.
+     ("01 Jul 2026 - 31 Jul 2026" → 2026-07-31).
+  Do not use Due Date, payment dates, or rewards/points "as of" snapshots.
 For notices/letters: Look for the date at the top of the document.
 
 Return ONLY the date in YYYY-MM-DD format. If you see a date like "11/3/25", interpret it as MM/DD/YY and convert to YYYY-MM-DD (e.g., "2025-11-03").
 If no date is visible, return "NONE"."""
 
-# Explicit statement/as-of/bill dates beat billing-period ranges (Tesla SolarPPA etc.)
+# Labeled statement dates beat billing-period ranges (Tesla SolarPPA, Amex, etc.).
+# Stronger labels win when several appear. Bare "as of" only at line start so
+# "Reward Dollars as of 07/28/2026" is not treated as the statement date.
 _LABELED_STATEMENT_DATE_RE = re.compile(
-    r'(?:statement\s*date|as\s*of(?:\s*date)?|bill\s*date)\s*[:\-]?\s*'
+    r'(?P<label>'
+    r'statement\s*(?:closing\s*)?date'
+    r'|closing\s*date'
+    r'|bill\s*date'
+    r'|as\s*of\s*date'
+    r'|(?:^|\n)\s*as\s*of'
+    r')\s*[:\-]?\s*'
     r'(?P<date>'
     r'\d{1,2}/\d{1,2}/\d{2,4}'
     r'|\d{4}-\d{2}-\d{2}'
     r'|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}'
     r'|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}'
     r')',
-    re.IGNORECASE,
+    re.IGNORECASE | re.MULTILINE,
 )
+_LABELED_STATEMENT_DATE_RANK = {
+    'statement date': 1,
+    'statement closing date': 1,
+    'closing date': 1,
+    'bill date': 2,
+    'as of date': 3,
+    'as of': 4,
+}
 
 # Statement period ranges near the header (Fidelity, banks). End date is the fallback filename date.
 _PERIOD_RANGE_RES = (
@@ -1022,18 +1041,30 @@ def _parse_loose_date_token(token):
     return None
 
 
-def _parse_labeled_statement_date(text):
-    """Return labeled Statement Date / As of / Bill Date as YYYY-MM-DD, or None.
+def _statement_date_label_rank(label):
+    """Lower rank wins when several labeled dates are present."""
+    key = re.sub(r'\s+', ' ', (label or '').strip().lower())
+    return _LABELED_STATEMENT_DATE_RANK.get(key, 99)
 
-    Explicit labels beat billing-period ranges. Does not match Due Date.
+
+def _parse_labeled_statement_date(text):
+    """Return labeled Statement/Closing/Bill/As-of Date as YYYY-MM-DD, or None.
+
+    Explicit labels beat billing-period ranges. Closing Date / Statement Date
+    beat incidental rewards "as of" snapshots. Does not match Due Date.
     """
     if not text:
         return None
     head = text[:2500]
-    match = _LABELED_STATEMENT_DATE_RE.search(head)
-    if not match:
-        return None
-    return _parse_loose_date_token(match.group('date'))
+    best = None  # (rank, position, date)
+    for match in _LABELED_STATEMENT_DATE_RE.finditer(head):
+        parsed = _parse_loose_date_token(match.group('date'))
+        if not parsed:
+            continue
+        candidate = (_statement_date_label_rank(match.group('label')), match.start(), parsed)
+        if best is None or candidate[:2] < best[:2]:
+            best = candidate
+    return best[2] if best else None
 
 
 def _parse_statement_period_range(text):
@@ -1093,12 +1124,13 @@ def _prefer_statement_date_from_pdf(info, file_path):
     """Refine statement invoice_date from PDF header text.
 
     Priority:
-      1) Labeled Statement Date / As of / Bill Date (Tesla SolarPPA etc.)
+      1) Labeled Statement Date / Closing Date / Bill Date (Tesla, Amex, etc.)
       2) Period END — only when missing, or when the model used the period start
          (Fidelity "01 Jul 2026 - 31 Jul 2026" → 2026-07-31)
 
     Never override a non-start date with period end when a usage/billing range is
-    present alongside a later Statement Date.
+    present alongside a later Statement Date. Do not treat rewards "as of"
+    snapshots as the statement date.
     """
     logger = logging.getLogger(__name__)
     if not info or not file_path:
@@ -1234,7 +1266,7 @@ def extract_invoice_info(file_path, all_pages=False, filename_hint=None):
             parsed_info['invoice_date'] = current_date
             logger.info(f"No date detected, using current date as fallback: {current_date}")
 
-    # Statements: labeled Statement Date beats period range; else fix period-start picks.
+    # Statements: labeled Statement/Closing Date beats period range; else fix period-start picks.
     _prefer_statement_date_from_pdf(parsed_info, file_path)
 
     # Validate and log warnings

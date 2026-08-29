@@ -642,6 +642,28 @@ class TestRenameInvoiceConversion:
         assert _parse_labeled_statement_date(
             "Due Date: 09/05/2026\nTotal Amount Due By 09/05/2026\n"
         ) is None
+        # Amex: Closing Date wins over rewards "as of" snapshot
+        amex_text = (
+            "Blue Cash Preferred from American Express\n"
+            "Closing Date 08/28/26\n"
+            "Account Ending 2-51000\n"
+            "                             Reward Dollars\n"
+            "  New Balance                    $622.22               as of 07/28/2026\n"
+            "Payment Due Date 09/22/26\n"
+        )
+        assert _parse_labeled_statement_date(amex_text) == "2026-08-28"
+        # Same when the snapshot sits on its own line after Reward Dollars
+        assert _parse_labeled_statement_date(
+            "Closing Date 08/28/26\nReward Dollars\nas of 07/28/2026\n"
+        ) == "2026-08-28"
+        # Incidental mid-line "as of" is not a statement date by itself
+        assert _parse_labeled_statement_date(
+            "Reward Dollars as of 07/28/2026\nPayment Due Date 09/22/26\n"
+        ) is None
+        # Header-style As of still counts (brokerage)
+        assert _parse_labeled_statement_date(
+            "As of 07/31/2026\nClient Account Statement\n"
+        ) == "2026-07-31"
 
         # Fidelity crypto: model used period start → correct to end
         info = {
@@ -680,6 +702,26 @@ class TestRenameInvoiceConversion:
         with patch('invoice_renamer._pdf_text_head', return_value=tesla_text):
             _prefer_statement_date_from_pdf(tesla_wrong, '/tmp/tesla.pdf')
         assert tesla_wrong['invoice_date'] == '2026-08-05'
+
+        # Amex: keep Closing Date; do not override with rewards "as of"
+        amex = {
+            'document_type': 'Statement',
+            'account_type': 'Credit Card',
+            'invoice_date': '2026-08-28',
+        }
+        with patch('invoice_renamer._pdf_text_head', return_value=amex_text):
+            _prefer_statement_date_from_pdf(amex, '/tmp/amex.pdf')
+        assert amex['invoice_date'] == '2026-08-28'
+
+        # Amex wrong model date (rewards as-of) → Closing Date wins
+        amex_wrong = {
+            'document_type': 'Statement',
+            'account_type': 'Credit Card',
+            'invoice_date': '2026-07-28',
+        }
+        with patch('invoice_renamer._pdf_text_head', return_value=amex_text):
+            _prefer_statement_date_from_pdf(amex_wrong, '/tmp/amex.pdf')
+        assert amex_wrong['invoice_date'] == '2026-08-28'
 
         # Non-statements without account type are left alone
         invoice_info = {
