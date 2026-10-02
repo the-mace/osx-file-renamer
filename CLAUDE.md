@@ -86,7 +86,7 @@ make lint
 
 # Configuration in .flake8:
 # - Max line length: 180
-# - Ignores: E201, E202, E402, E722
+# - Ignores: E201, E202, E402, W503
 ```
 
 ## Architecture
@@ -153,7 +153,7 @@ The tool uses LiteLLM for flexible LLM provider support. Configuration via envir
 **Model Selection**:
 
 - `LLM_MODEL` - Default model to use (optional, defaults to fast non-reasoning `xai/grok-4.20-0309-non-reasoning`)
-- Examples: `claude-3-5-sonnet-20241022`, `gpt-4`, `gemini-pro`, `xai/grok-4.20-0309-non-reasoning`
+- Any LiteLLM model string; the provider's current model list is the reference
 
 **Model Auto-Selection**:
 
@@ -161,13 +161,9 @@ The tool uses LiteLLM for flexible LLM provider support. Configuration via envir
 - Vision models automatically selected for images and scanned PDFs
 - Legacy model names automatically converted to LiteLLM format for backward compatibility
 
-**Supported Model Families**:
-
-- Claude: `claude-3-5-sonnet-20241022`, `claude-3-opus-20240229` (Anthropic)
-- GPT: `gpt-4`, `gpt-4-turbo`, `gpt-4-vision-preview` (OpenAI)
-- Gemini: `gemini-pro`, `gemini-pro-vision` (Google)
-- Grok: `grok-4-1-fast-reasoning`, `grok-4-1-fast-non-reasoning`, `grok-beta` (xAI)
-- 100+ more via LiteLLM (see <https://docs.litellm.ai/docs/providers>)
+**Supported providers**: Anthropic, OpenAI, Google, xAI, and 100+ more via
+LiteLLM (see <https://docs.litellm.ai/docs/providers>). Legacy Grok names
+(`grok-4-1-fast-*`, `grok-beta`) are mapped to current models in `llm_client.py`.
 
 ### External Dependencies
 
