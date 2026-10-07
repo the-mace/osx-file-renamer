@@ -136,7 +136,14 @@ make lint
    - Topic policy is in `_select_display_topic`: subtype types keep `{qualifier} {type}` (e.g. Trade Confirmation); otherwise qualifier replaces type (e.g. Barn)
    - Premise-style labels (Barn, Cogen, Apt 2B) are dropped for banks/tolls/transit via `_should_drop_premise_qualifier` so mailing addresses cannot invent multi-premise topics
    - Short vendors (Amex, BofA, Chase); account id last-4 / short alnum (low PII); lowercase extensions
-   - Original filename is a weak signal + code fallback for missing qualifier — not the primary naming brain
+   - Hyphenated brokerage `AAA-BBBBB-C-D` uses last 4 of the 5-digit body (609-92865-1-7 → 2865)
+   - Portfolio overviews keep a primary-account last-4 when known
+   - Bills with Invoice # / Due Date / new charges stay Invoice even if they list a payment received
+   - Insurance: copy the labeled POLICY line (Workers Compensation, or "NJ Auto 7101" → Auto). Do not invent Auto/Property from the insurer brand. The policy-line id is the account id; a bank account "ending in ####" that will be debited is not the account id
+   - Party (`patient_animal_name`) is a single named patient/animal; omit when 2+ animals have charges
+   - Original filename is a weak signal + code fallback for missing qualifier and account last-4 — not the primary naming brain
+   - A labeled Account Number in the PDF text (footer past page 2, or a too-short model fragment) fills last-4. The neighboring routing number is not the account id
+   - Portal invoice-id download names (`INV-DF-US-PT0…`) are not document titles
 
 ### API Configuration
 
@@ -216,6 +223,12 @@ If renames still feel slow or vision API cost becomes an issue, consider these i
 
 - Short filenames: Amex not “American Express”; CC not “Credit Card”
 - Low PII: last-4 or short alphanumeric account ids only
+- Hyphenated brokerage numbers: last 4 of the 5-digit body, not the check-digit tail
+- Portfolio packages keep a primary-account last-4 when known
+- Bills with Invoice # / Due Date / new charges stay Invoice even if they list a payment received
+- Insurance: copy the labeled POLICY line (Workers Compensation, or "NJ Auto 7101" → Auto). Do not invent Auto/Property from the insurer brand. The policy-line id is the account id; a bank account being debited is not the account id
+- Party is a single named patient/animal; omit when 2+ animals have charges
+- Portal invoice-id download names are not titles
 - Priority fields: Vendor → Topic → AccountId → Date
 - Lowercase extensions always
 

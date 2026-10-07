@@ -28,6 +28,10 @@ except ImportError:
 
 
 PDF_CONVERSION_TIMEOUT = 60
+PDF_TEXT_TIMEOUT = 15
+# pdftotext -layout: account digits sit under the "Account Number" header.
+# Routing number is a different column (~30+ chars away); keep the slack tight.
+_ACCOUNT_LABEL_COLUMN_SLACK = 8
 CONVERTIBLE_IMAGE_EXTENSIONS = ['.heic', '.jpg', '.jpeg', '.png', '.webp', '.tiff', '.tif', '.bmp', '.gif']
 CONVERTIBLE_DOC_EXTENSIONS = ['.docx']
 CONVERTIBLE_EXTENSIONS = CONVERTIBLE_IMAGE_EXTENSIONS + CONVERTIBLE_DOC_EXTENSIONS
@@ -41,6 +45,7 @@ CONVERTIBLE_EXTENSIONS = CONVERTIBLE_IMAGE_EXTENSIONS + CONVERTIBLE_DOC_EXTENSIO
 #
 # Grammar:
 #   Vendor [AccountType] Topic [AccountId] [- Party] [RefId] Date.ext
+# Party is a single named patient/animal; omitted when 2+ animals have charges.
 #
 # Topic is produced from (document_type, document_title/qualifier):
 #   - no qualifier → document_type
@@ -77,7 +82,9 @@ Ground every field in text you can actually see. If a field is unreadable or abs
      (not Report, not document_title "Investment"). Product names like "Investment Report"
      or "Account Summary" for a dated account statement are still Statement.
    - Confirmation for trade/order/booking confirmations (not Receipt)
-   - Receipt for proof of payment / "payment received"
+   - Invoice when the page is a bill (Invoice/Bill heading, Invoice #, Due Date, amount due,
+     remittance stub, or new charges) — even if it lists a payment received or "auto pay receipt"
+   - Receipt only for standalone proof of payment (no amount due / no new charges)
    - Quote for estimates/proposals not yet requesting payment
    - Report only if the document explicitly says report AND is not a bank/brokerage statement
    - "JOB INVOICE" / "Job Invoice" form title → Invoice (document_title null, not "Job")
@@ -97,7 +104,12 @@ Ground every field in text you can actually see. If a field is unreadable or abs
 4. invoice_number — short doc ref only (Invoice #, Bill #, Case #, Permit #). null if none.
    Never full account/card numbers.
 
-5. patient_animal_name — medical patient or vet pet name only; else null.
+5. patient_animal_name — proper name of the medical patient / vet pet / horse; else null.
+   If several named animals appear, return a JSON array of their proper names — never just the first.
+   Generic species/role labels are not names (Horse, Patient, Pet, Dog, Cat, "Horse (mason)").
+   patient_count — on vet/medical docs, number of distinct patients/animals with their own
+   charges or line-item groups (count generic "Horse" groups too). Else null. Always set
+   patient_count on vet/medical documents even if you also filled a name.
 
 6. account_type — specific category when known, else null:
    Checking, Savings, Money Market, CD, IRA, Investment, Credit Card (or Platinum/Gold if labeled as tier),
@@ -108,7 +120,10 @@ Ground every field in text you can actually see. If a field is unreadable or abs
 
 7. account_last_4 — last 4 digits or short alphanumeric id for a SINGLE account/card
    (also utility/telecom service accounts even when account_type is null).
-   Portfolio or no account → null. Never full account numbers.
+   Hyphenated brokerage AAA-BBBBB-C-D (e.g. 609-92865-1-7) → last 4 of the 5-digit body
+   (2865), not the check-digit tail and not body+check (8651).
+   Portfolio overview: last-4 of the PRIMARY / first listed account when visible; else null.
+   Never full account numbers.
 
 8. document_title — optional SHORT qualifier (not a full filename). Use when it adds meaning beyond type:
    - Confirmation subtype: Trade, Order, Booking, Reservation
@@ -119,8 +134,15 @@ Ground every field in text you can actually see. If a field is unreadable or abs
      null for bank, credit card, brokerage, toll/E-ZPass, transit, and any statement that
      only shows a street mailing address with no separate service-location label.
      Never invent Barn/Cogen/Garage/etc. from a street line alone.
-   - Non-routine subject: Tax Delinquent, W-2, Lease, EOB, Building Permit, Auto Policy
-   - Multi-item summary: short synthesis (e.g. Auto Property Insurance)
+   - Non-routine subject: Tax Delinquent, W-2, Lease, EOB, Building Permit
+   - Insurance: copy the labeled POLICY / coverage line (often page 2), e.g.
+     Workers Compensation, Homeowners. "NJ Auto 7101" under Policy Being Billed
+     is Auto, and 7101 is account_last_4. Do not invent Auto, Property, or
+     Liability from the insurer brand (United Services Automobile Association
+     is the company, not the policy). A single labeled policy is that type —
+     not a guessed bundle. A bank or card account "ending in ####" that will
+     be debited is the payment account, not account_last_4.
+   - Multi-item summary: only when 2+ distinct product lines are labeled on the document
    null when Vendor + type is enough (routine invoice, receipt, itinerary, plain bank/CC/toll statement).
    Do not restate the type ("Invoice Document", "Travel Itinerary" → null). Max 5 words, title case.
    Do not repeat vendor words. Do not invent a premise label that is not on the document.
@@ -141,6 +163,7 @@ Return ONLY this JSON (null for anything missing):
   "invoice_date": "YYYY-MM-DD",
   "invoice_number": "Short Id or null",
   "patient_animal_name": "Name or null",
+  "patient_count": null,
   "account_type": "Type or null",
   "account_last_4": "Last4 or null",
   "usdf_test_name": null,
@@ -165,6 +188,52 @@ FILENAME_ABBREVIATIONS = [
 MAX_ACCOUNT_ID_LEN = 8  # longer account ids look like full numbers — trim to last 4
 # Filename ref slot is last-4 only (low PII); longer invoice/doc ids collapse the same way
 REF_ID_DISPLAY_LEN = 4
+# Edward Jones / similar: AAA-BBBBB-C-D — last-4 of the 5-digit body, not the check-digit tail
+_BROKERAGE_HYPHEN_ACCOUNT_RE = re.compile(r'^(?:\d{2,4}-)?(\d{5})-\d(?:-\d)?$')
+# Vendor download masks: XXXX2865, XXXX2865-8, xx-1234
+_FILENAME_MASKED_ACCOUNT_RE = re.compile(r'(?i)\bx{2,}[\s_-]*(\d{4})\b')
+# 4-digit body plus trailing check digit: 2865-8 / 2865 8
+_FILENAME_CHECKDIGIT_ACCOUNT_RE = re.compile(r'(?<!\d)(\d{4})[\s_-]\d\b')
+_FILENAME_YEAR_TOKEN_RE = re.compile(r'^(?:19|20)\d{2}$')
+# "Account Number" / "Account No." / "Account #" — not "Account Notice"
+_ACCOUNT_NUMBER_LABEL_RE = re.compile(
+    r'(?i)\baccount\s*(?:number\b|no\.?\b|#)'
+)
+# Labeled insurance product lines. Longest phrases first so
+# "Workers Compensation" is not shortened to a later token.
+_POLICY_COVERAGE_PHRASES = (
+    ("workers' compensation", 'Workers Compensation'),
+    ("worker's compensation", 'Workers Compensation'),
+    ('workers compensation', 'Workers Compensation'),
+    ('commercial auto', 'Commercial Auto'),
+    ('personal automobile', 'Auto'),
+    ('personal auto', 'Auto'),
+    ('homeowners', 'Homeowners'),
+    ('homeowner', 'Homeowners'),
+    ("renter's", 'Renters'),
+    ('renters', 'Renters'),
+    ('condominium', 'Condo'),
+    ('inland marine', 'Inland Marine'),
+    ('motorcycle', 'Motorcycle'),
+    ('umbrella', 'Umbrella'),
+    ('automobile', 'Auto'),
+    ('dwelling', 'Dwelling'),
+    ('flood', 'Flood'),
+    ('condo', 'Condo'),
+    ('boat', 'Boat'),
+    ('auto', 'Auto'),
+    ('life', 'Life'),
+)
+# "Policy Being Billed" / "Policy Type" / "POLICY" — not the word "policies"
+_POLICY_LABEL_RE = re.compile(
+    r'(?i)\b(?:policy(?!ies\b)(?:\s+being\s+billed|\s+type|\s+name)?|line\s+of\s+business)\b'
+)
+# Draft account on an insurance bill: "bank account ending in 0529"
+_PAYMENT_ACCOUNT_ENDING_RE = re.compile(
+    r'(?i)\b(?:bank|checking|savings|debit|payment)\s+account\s+ending\s+in\s+(\d{4})\b'
+)
+# How many following content lines to search after a policy label
+_POLICY_LOOKAHEAD_LINES = 4
 
 # Original filenames that are camera/scanner defaults or bare numbers carry no useful signal
 GENERIC_FILENAME_PATTERNS = [
@@ -200,13 +269,17 @@ _FILENAME_ACCOUNT_WORDS = frozenset({
 # (e.g. "Quest Billing" when the PDF is a payment Receipt → keep type Receipt, not title Billing).
 # Confirmation subtypes (Trade, Order, Booking, Reservation) are intentionally NOT listed here.
 _FILENAME_TYPE_SYNONYMS = frozenset({
-    'billing', 'bill', 'bills', 'invoice', 'invoices', 'receipt', 'receipts', 'statement',
+    'billing', 'bill', 'bills', 'invoice', 'invoices', 'inv', 'receipt', 'receipts', 'statement',
     'statements', 'notice', 'notices', 'letter', 'letters', 'report', 'reports', 'form',
     'forms', 'contract', 'contracts', 'policy', 'policies', 'certificate', 'certificates',
     'permit', 'permits', 'quote', 'quotes', 'estimate', 'estimates', 'itinerary', 'map',
     'maps', 'payment', 'payments', 'paid', 'remittance', 'remit', 'stub', 'summary',
     'document', 'documents', 'file', 'scan', 'copy', 'confirmation', 'confirmations',
 })
+# Vowels for "is this a real word or an invoice-id fragment?" (Y counts)
+_FILENAME_VOWELS_RE = re.compile(r'[aeiouyAEIOUY]')
+# All-caps hyphenated portal ids: INV-DF-US-PT0TP1WMURQRB6BZK1
+_FILENAME_CAPS_HYPHEN_ID_RE = re.compile(r'^[A-Z0-9]+(?:-[A-Z0-9]+)+$')
 # Only these single leftover tokens may be recovered when the filename also contains a type word
 # (TradeConfirmation → Trade). Arbitrary leading tokens (RavenInvoice30928720 → Raven) are
 # often vendor tracking junk with no relationship to document content.
@@ -252,6 +325,17 @@ _BANK_STYLE_ACCOUNT_TYPES = frozenset({
     'cc', 'platinum', 'gold', 'annuity', 'vul', 'life insurance', 'brokerage', '401k',
     'portfolio', 'roth', 'hsa', 'fsa', 'margin',
 })
+# Species/role labels that are not a proper patient/animal name (vet multi-horse bills).
+_GENERIC_PATIENT_LABELS = frozenset({
+    'horse', 'horses', 'pony', 'ponies', 'dog', 'dogs', 'cat', 'cats',
+    'pet', 'pets', 'patient', 'patients', 'animal', 'animals', 'equine',
+    'foal', 'colt', 'filly', 'mare', 'gelding', 'stallion',
+})
+# Joined names from a model that listed several animals in one string
+_MULTIPLE_PATIENT_SPLIT_RE = re.compile(
+    r'\s*(?:,|;|/|&|\+|\band\b)\s*',
+    re.IGNORECASE,
+)
 
 
 def _split_filename_tokens(name):
@@ -301,14 +385,35 @@ def _max_consecutive_letter_run(text):
     return max_run
 
 
+def _is_opaque_topic_token(word):
+    """True for invoice-id / token fragments that must never become document_title.
+
+    Split portal ids yield leftovers like WMURQRB, BZK, Wydwcs, RTH. Real topic
+    words (Tax, Trade, Delinquent, Barn, Raven) have enough vowels.
+    """
+    if not word:
+        return False
+    letters = re.sub(r'[^A-Za-z]', '', word)
+    if len(letters) < 3:
+        return False
+    vowel_count = len(_FILENAME_VOWELS_RE.findall(letters))
+    if vowel_count == 0:
+        return True
+    # Long consonant-heavy blobs (WMURQRB = 7 letters, 1 vowel)
+    if len(letters) >= 6 and vowel_count <= 1:
+        return True
+    return False
+
+
 def _is_hash_like_basename(raw_name):
     """True when the basename is download-tracking junk (hash/token ± account/date).
 
     Portals often name files like:
       <sha256>_<account>_<MM-DD-YYYY>.pdf
       <base64url-token>.pdf   (e.g. Stripe/xAI invoice downloads)
+      INV-DF-US-PT0TP1WMURQRB6BZK1.pdf  (Starlink/Stripe invoice ids)
     Splitting those on letter/digit boundaries yields pure-hex or gibberish fragments
-    (dcd, cdfd, Wydwcs, RTH, bbu) that must never become document_title.
+    (dcd, cdfd, Wydwcs, RTH, bbu, Wmurqrb, BZK) that must never become document_title.
     """
     if not raw_name:
         return False
@@ -339,6 +444,14 @@ def _is_hash_like_basename(raw_name):
         and _max_consecutive_letter_run(dense) <= _FILENAME_OPAQUE_MAX_LETTER_RUN
     ):
         return True
+    # All-caps hyphenated invoice ids: INV-DF-US-PT0TP1WMURQRB6BZK1
+    # Require a long mixed letter+digit segment so FORM-1040-US-TAX still hints.
+    if _FILENAME_CAPS_HYPHEN_ID_RE.fullmatch(raw_name):
+        if any(
+            len(seg) >= 10 and any(c.isalpha() for c in seg) and any(c.isdigit() for c in seg)
+            for seg in raw_name.split('-')
+        ):
+            return True
     return False
 
 
@@ -378,9 +491,13 @@ def _build_extraction_prompt(filename_hint=None):
         return INVOICE_EXTRACTION_PROMPT
     hint_block = (
         f'The file\'s original name was "{filename_hint}". '
-        'Use it as a weak signal for vendor, type, or document_title when consistent with content '
-        '(e.g. "Trade Confirmation" → type Confirmation, document_title Trade). '
-        'Content wins on conflict (page says payment received → Receipt even if named Billing). '
+        'Use it as a weak signal for vendor, type, document_title, or account_last_4 when '
+        'consistent with content (e.g. "Trade Confirmation" → type Confirmation, document_title Trade; '
+        '"XXXX2865-8" → account_last_4 2865). '
+        'Content wins on conflict (a paid confirmation with no amount due → Receipt even if named Billing; '
+        'a bill with Invoice Number / Due Date stays Invoice even if it lists a payment received). '
+        'Masked ids like XXXX2865-8 are account last-4s — prefer that 4-digit body over a different '
+        'slice of the same hyphenated brokerage number. '
         'Ignore download/tracking junk in the name that does not appear on the document '
         '(e.g. RavenInvoice30928720 → ignore Raven; do not invent a title from it). '
         'Do not invent a premise/location label from the filename alone.\n\n'
@@ -438,6 +555,9 @@ def _topic_words_from_filename_hint(filename_hint, business_name=None, document_
         # Hash fragments from split download tokens (dcd, cdfd, cda, dae, …)
         if _is_pure_hex_token(word):
             continue
+        # Invoice-id fragments (WMURQRB, BZK, Wydwcs, RTH)
+        if _is_opaque_topic_token(word):
+            continue
         # Skip tiny tokens (e.g. leftover "CC" after account-word filtering edge cases)
         if len(re.sub(r'[^a-zA-Z0-9]', '', word)) < 3:
             continue
@@ -452,6 +572,24 @@ def _topic_words_from_filename_hint(filename_hint, business_name=None, document_
     except Exception:
         topic = topic.title()
     return topic if topic else None
+
+
+def _alnum_folded(text):
+    """Lowercase alphanumeric-only form of a string (for id comparisons)."""
+    return re.sub(r'[^A-Za-z0-9]', '', str(text or '')).lower()
+
+
+def _filename_hint_is_invoice_id(filename_hint, invoice_number):
+    """True when the original filename is the invoice/doc id itself.
+
+    Starlink/Stripe portals save INV-DF-US-PT0TP1WMURQRB6BZK1.pdf — that string
+    is the invoice number, not a document_title.
+    """
+    hint_key = _alnum_folded(filename_hint)
+    inv_key = _alnum_folded(invoice_number)
+    if not hint_key or not inv_key or len(inv_key) < 8:
+        return False
+    return hint_key == inv_key
 
 
 def _apply_filename_hint_fallback(info, filename_hint):
@@ -479,6 +617,9 @@ def _apply_filename_hint_fallback(info, filename_hint):
     if not info or not filename_hint:
         return info
     if _raw_qualifier(info):
+        return info
+    # Portal download name is the invoice id itself — not a title
+    if _filename_hint_is_invoice_id(filename_hint, info.get('invoice_number')):
         return info
 
     hint_norm = _split_filename_tokens(_strip_filename_date_tokens(filename_hint))
@@ -523,6 +664,70 @@ def _apply_filename_hint_fallback(info, filename_hint):
     logging.getLogger(__name__).info(
         f"Filled document_title from filename hint: {topic!r} (hint={filename_hint!r})"
     )
+    return info
+
+
+def _account_id_from_filename_hint(filename_hint):
+    """Extract a last-4 account id from a filename hint.
+
+    Returns (last4, confidence) or (None, None).
+    'high' = masked XXXX#### or ####-# vendor download id.
+    'medium' = a single isolated 4-digit token that is not a year.
+    """
+    if not filename_hint:
+        return None, None
+    text = str(filename_hint).strip()
+    if not text:
+        return None, None
+
+    masked = _FILENAME_MASKED_ACCOUNT_RE.search(text)
+    if masked:
+        return masked.group(1), 'high'
+
+    for match in _FILENAME_CHECKDIGIT_ACCOUNT_RE.finditer(text):
+        last4 = match.group(1)
+        if not _FILENAME_YEAR_TOKEN_RE.fullmatch(last4):
+            return last4, 'high'
+
+    fours = [
+        tok for tok in text.split()
+        if re.fullmatch(r'\d{4}', tok) and not _FILENAME_YEAR_TOKEN_RE.fullmatch(tok)
+    ]
+    if len(fours) == 1:
+        return fours[0], 'medium'
+    return None, None
+
+
+def _apply_filename_account_id_fallback(info, filename_hint):
+    """Fill or correct account_last_4 from the original filename.
+
+    Safety net only. High-confidence masked/check-digit ids win over a conflicting
+    model slice (XXXX2865-8 vs 8651). Isolated 4-digit tokens fill a missing id only —
+    content still wins when the model already extracted a last-4.
+    """
+    if not info or not filename_hint:
+        return info
+    candidate, confidence = _account_id_from_filename_hint(filename_hint)
+    if not candidate:
+        return info
+
+    current_norm = _normalize_account_id(info.get('account_last_4'))
+    if current_norm == candidate:
+        return info
+
+    logger = logging.getLogger(__name__)
+    if not current_norm:
+        info['account_last_4'] = candidate
+        logger.info(
+            f"Filled account_last_4 from filename hint: {candidate!r} (hint={filename_hint!r})"
+        )
+        return info
+    if confidence == 'high':
+        info['account_last_4'] = candidate
+        logger.info(
+            f"Replaced account_last_4 {current_norm!r} with filename id {candidate!r} "
+            f"(hint={filename_hint!r})"
+        )
     return info
 
 
@@ -640,6 +845,7 @@ Return ONLY this JSON (no markdown, no code block):
   "invoice_date": "YYYY-MM-DD or null",
   "invoice_number": null,
   "patient_animal_name": null,
+  "patient_count": null,
   "account_type": null,
   "account_last_4": null,
   "usdf_test_name": "USDF Test Name or null",
@@ -987,7 +1193,8 @@ def _validate_invoice_data(parsed_info):
     logger = logging.getLogger(__name__)
 
     # Warn when account_type is present without an id (incomplete bank/CC pair).
-    # last4 without type is fine (utility bills, etc.). Portfolio never needs last4.
+    # last4 without type is fine (utility bills, etc.). Portfolio last4 is optional
+    # (overview may still carry a primary-account id).
     has_account_type = parsed_info.get('account_type') is not None
     has_account_last_4 = parsed_info.get('account_last_4') is not None
     account_type_value = parsed_info.get('account_type')
@@ -1097,8 +1304,13 @@ def _parse_statement_period_end(text):
     return end
 
 
-def _pdf_text_head(file_path, max_pages=1):
-    """Extract text from the first page(s) of a PDF via pdftotext, or None."""
+def _pdf_text(file_path, first_page=1, last_page=None):
+    """Extract layout text from a PDF via pdftotext, or None.
+
+    last_page=None reads through the end of the document. Account numbers on
+    X Money statements sit in a footer after the dispute notice, often past
+    the pages sent to the model.
+    """
     if not file_path or not str(file_path).lower().endswith('.pdf'):
         return None
     if not os.path.exists(file_path):
@@ -1106,18 +1318,295 @@ def _pdf_text_head(file_path, max_pages=1):
     pdftotext_cmd = _find_pdftotext()
     if not pdftotext_cmd:
         return None
+    cmd = [pdftotext_cmd, '-layout', '-f', str(first_page)]
+    if last_page is not None:
+        cmd.extend(['-l', str(last_page)])
+    cmd.extend([file_path, '-'])
     try:
         result = subprocess.run(
-            [pdftotext_cmd, '-f', '1', '-l', str(max_pages), '-layout', file_path, '-'],
+            cmd,
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=PDF_TEXT_TIMEOUT,
             check=False,
         )
         text = (result.stdout or '').strip()
         return text or None
     except (OSError, subprocess.TimeoutExpired):
         return None
+
+
+def _pdf_text_head(file_path, max_pages=1):
+    """Extract text from the first page(s) of a PDF via pdftotext, or None."""
+    return _pdf_text(file_path, first_page=1, last_page=max_pages)
+
+
+def _digit_run_at_column(line, column, slack=_ACCOUNT_LABEL_COLUMN_SLACK):
+    """Return the 4+ digit run whose start is closest to column, or None."""
+    best = None
+    best_dist = None
+    for match in re.finditer(r'\d{4,}', line):
+        dist = abs(match.start() - column)
+        if best is None or dist < best_dist:
+            best = match.group(0)
+            best_dist = dist
+    if best is None or best_dist > slack:
+        return None
+    return best
+
+
+def _parse_labeled_account_number(text):
+    """Digit string of a labeled Account Number in PDF text, or None.
+
+    X Money prints a footer table after the dispute notice:
+
+        Routing Number                        Account Number                         Issuing Bank
+        021214891                             363240448011                           Cross River Bank
+
+    Digits line up under the Account Number header. The routing number, in a
+    different column, is ignored. Inline "Account Number: 363240448011" works too.
+    """
+    if not text:
+        return None
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        match = _ACCOUNT_NUMBER_LABEL_RE.search(line)
+        if not match:
+            continue
+        # Same line, after the label: "Account Number: 363240448011"
+        inline = re.search(r'\d{4,}', line[match.end():])
+        if inline:
+            if _normalize_account_id(inline.group(0)):
+                return inline.group(0)
+            continue
+        # Column header: value on the next content line, under the label.
+        label_col = match.start()
+        for follow in lines[index + 1:index + 4]:
+            if not follow.strip():
+                continue
+            chosen = _digit_run_at_column(follow, label_col)
+            if chosen and _normalize_account_id(chosen):
+                return chosen
+            break
+    return None
+
+
+def _parse_labeled_account_last4(text):
+    """Last 4 of a labeled Account Number in PDF text, or None."""
+    return _normalize_account_id(_parse_labeled_account_number(text))
+
+
+def _is_padded_account_tail(model_value, full_digits):
+    """True when the model zero-padded a short tail of the real account number.
+
+    X Money account 363240448011 was returned as "011" and then "0011".
+    A real last-4 that merely starts with 0 (Fidelity 0961) is not a pad
+    of a different account.
+    """
+    raw = re.sub(r'\D', '', str(model_value or ''))
+    if not raw or not full_digits:
+        return False
+    if len(raw) >= 4 and full_digits.endswith(raw) and raw == full_digits[-4:]:
+        return False
+    stripped = raw.lstrip('0')
+    if not stripped or len(stripped) >= 4 or len(stripped) < 2:
+        return False
+    return full_digits.endswith(stripped)
+
+
+def _parse_policy_product_line(line):
+    """Return (coverage, policy_id or None) for one labeled policy product line.
+
+    "NJ Auto 7101" → ("Auto", "7101"). "Workers Compensation" → ("Workers Compensation", None).
+    Letterhead such as "United Services Automobile Association" does not match.
+    A trailing vehicle year (Auto 2023) is not a policy id.
+    """
+    text = re.sub(r'\s+', ' ', (line or '').strip())
+    if not text or len(text) > 80:
+        return None
+    stripped = re.sub(
+        r'(?i)^(?:policy(?!ies\b)(?:\s+being\s+billed|\s+type|\s+name)?'
+        r'|line\s+of\s+business|coverage)\s*[:\-]?\s+',
+        '',
+        text,
+    )
+    if stripped != text:
+        text = stripped.strip()
+    if not text or re.search(r'[$]|/\d', text):
+        return None
+    for phrase, display in _POLICY_COVERAGE_PHRASES:
+        match = re.fullmatch(
+            rf'(?:[A-Z]{{2}}\s+)?{re.escape(phrase)}(?:\s+(?P<pid>[A-Za-z0-9-]{{3,12}}))?',
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            continue
+        pid = match.group('pid')
+        if pid and (_FILENAME_YEAR_TOKEN_RE.match(pid) or not re.search(r'\d', pid)):
+            pid = None
+        if pid:
+            pid = _normalize_account_id(pid)
+        return display, pid
+    return None
+
+
+def _parse_labeled_policies(text):
+    """Unique (coverage, policy_id) pairs from lines next to a policy label."""
+    if not text:
+        return []
+    lines = text.splitlines()
+    found = []
+    seen = set()
+    for index, line in enumerate(lines):
+        if not _POLICY_LABEL_RE.search(line):
+            continue
+        candidates = [line]
+        checked = 0
+        for follow in lines[index + 1:index + 1 + 8]:
+            if not follow.strip():
+                continue
+            candidates.append(follow)
+            checked += 1
+            if checked >= _POLICY_LOOKAHEAD_LINES:
+                break
+        for candidate in candidates:
+            parsed = _parse_policy_product_line(candidate)
+            if not parsed:
+                continue
+            if parsed not in seen:
+                seen.add(parsed)
+                found.append(parsed)
+            break
+    return found
+
+
+def _payment_account_last4(text):
+    """Last 4 of a bank/card account that will be debited, or None."""
+    if not text:
+        return None
+    match = _PAYMENT_ACCOUNT_ENDING_RE.search(text)
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _title_names_coverage(title, coverage):
+    """True when title already contains the coverage as a whole word."""
+    if not title or not coverage:
+        return False
+    return re.search(rf'(?i)\b{re.escape(coverage)}\b', str(title)) is not None
+
+
+def _fill_insurance_policy_from_pdf(info, file_path):
+    """Fill a missing policy qualifier and id from the labeled policy line.
+
+    USAA insurance bills are headed INSURANCE BILL and list "NJ Auto 7101"
+    under Policy Being Billed. The model often returns Statement with no title
+    because the page also says Statement Date, and it copies the draft account
+    ("bank account ending in 0529") instead of the policy id. The insurer's
+    legal name (United Services Automobile Association) is not a policy line.
+
+    One labeled coverage becomes the topic, including when the model returned
+    a longer form ("NJ Auto") or also put that coverage in account_type
+    ("Auto" + "NJ Auto" → Auto, not "Auto NJ Auto"). Two or more distinct
+    coverages are left for the model. A single policy-line id replaces
+    whatever the model returned (member number, draft account, or nothing).
+    A payment-account last-4 is dropped when the policy line has no id.
+    """
+    logger = logging.getLogger(__name__)
+    if not info or not file_path:
+        return
+    text = _pdf_text(file_path)
+    policies = _parse_labeled_policies(text)
+    if not policies:
+        return
+
+    coverages = []
+    for coverage, _pid in policies:
+        if coverage not in coverages:
+            coverages.append(coverage)
+    ids = []
+    for _coverage, pid in policies:
+        if pid and pid not in ids:
+            ids.append(pid)
+    policy_id = ids[0] if len(coverages) == 1 and len(ids) == 1 else None
+    payment = _payment_account_last4(text)
+
+    if len(coverages) == 1:
+        coverage = coverages[0]
+        current = _raw_qualifier(info)
+        if (current or '').strip().lower() != coverage.lower():
+            logger.info(
+                f"Filled document_title {coverage!r} from labeled policy line "
+                f"(was {current!r})"
+            )
+            info['document_title'] = coverage
+            if 'qualifier' in info:
+                info['qualifier'] = coverage
+        account_type = info.get('account_type')
+        if _title_names_coverage(account_type, coverage):
+            logger.info(
+                f"Dropped account_type {account_type!r} (restates policy coverage)"
+            )
+            info['account_type'] = None
+    else:
+        logger.info(
+            f"Multiple labeled policies {coverages!r}; leaving document_title unchanged"
+        )
+
+    current_id = _normalize_account_id(info.get('account_last_4'))
+    if policy_id and current_id != policy_id:
+        previous = info.get('account_last_4')
+        info['account_last_4'] = policy_id
+        logger.info(
+            f"Using policy id {policy_id} from labeled policy line (was {previous!r})"
+        )
+        return
+    if payment and current_id == payment:
+        logger.info(
+            f"Dropped payment-account last-4 {current_id} "
+            "(bank account being debited, not the policy)"
+        )
+        info['account_last_4'] = None
+
+
+def _fill_account_last4_from_pdf(info, file_path):
+    """Fill a missing or zero-padded account id from a labeled Account Number.
+
+    Runs when the model omitted account_last_4, returned fewer than 4 digits,
+    or zero-padded a short tail ("0011" from 363240448011 → 8011). A last-4
+    that does not start with 0 is left alone. Receipts are skipped.
+    """
+    logger = logging.getLogger(__name__)
+    if not info or not file_path:
+        return
+    current_norm = _normalize_account_id(info.get('account_last_4'))
+    if current_norm and not str(current_norm).startswith('0'):
+        return
+    dtype = str(info.get('document_type') or '').strip().lower()
+    account_detail_types = {
+        'statement', 'report', 'notice', 'letter', 'policy', 'contract',
+        'invoice', 'confirmation',
+    }
+    if dtype not in account_detail_types and not info.get('account_type'):
+        return
+    text = _pdf_text(file_path)
+    full_digits = _parse_labeled_account_number(text)
+    last4 = _normalize_account_id(full_digits)
+    if not last4 or last4 == current_norm:
+        return
+    if current_norm and not _is_padded_account_tail(info.get('account_last_4'), full_digits):
+        return
+    previous = info.get('account_last_4')
+    info['account_last_4'] = last4
+    if previous:
+        logger.info(
+            f"Replaced short account_last_4 {previous!r} with {last4} "
+            "from PDF account-number label"
+        )
+    else:
+        logger.info(f"Filled account_last_4 {last4} from PDF account-number label")
 
 
 def _prefer_statement_date_from_pdf(info, file_path):
@@ -1269,6 +1758,12 @@ def extract_invoice_info(file_path, all_pages=False, filename_hint=None):
     # Statements: labeled Statement/Closing Date beats period range; else fix period-start picks.
     _prefer_statement_date_from_pdf(parsed_info, file_path)
 
+    # Insurance: labeled policy line (NJ Auto 7101) beats a null title and a draft-account last-4.
+    _fill_insurance_policy_from_pdf(parsed_info, file_path)
+
+    # Account number may sit in a footer past the pages the model saw.
+    _fill_account_last4_from_pdf(parsed_info, file_path)
+
     # Validate and log warnings
     _validate_invoice_data(parsed_info)
 
@@ -1333,6 +1828,7 @@ def clean_filename(text, limit_words=None):
 def _normalize_account_id(value):
     """Normalize account identifier for filenames: short, low-PII, alphanumeric OK.
 
+    - Hyphenated brokerage AAA-BBBBB-C-D (e.g. 609-92865-1-7): last 4 of the 5-digit body
     - If 4+ digits present (e.g. xxxx1234, xx-1234, full numbers): keep last 4 digits only
     - Else short alphanumeric refs (e.g. A12B): keep as-is up to MAX_ACCOUNT_ID_LEN
     - Too short or empty: None
@@ -1340,6 +1836,10 @@ def _normalize_account_id(value):
     if not value or value == "null":
         return None
     raw = str(value).strip()
+    compact = re.sub(r'\s+', '', raw)
+    hyphenated = _BROKERAGE_HYPHEN_ACCOUNT_RE.fullmatch(compact)
+    if hyphenated:
+        return hyphenated.group(1)[-4:]
     digits = re.sub(r'[^\d]', '', raw)
     alnum = re.sub(r'[^A-Za-z0-9]', '', raw)
     if not alnum:
@@ -1560,6 +2060,121 @@ def _normalize_financial_statement_fields(info):
             info['qualifier'] = None
 
 
+def _patient_count_value(info):
+    """Parse patient_count from model output; None if missing or not an int."""
+    if not info:
+        return None
+    raw = info.get('patient_count')
+    if raw is None or raw == 'null' or raw == '':
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _patient_name_tokens(value):
+    """Split model patient_animal_name (string, list, or null) into name tokens."""
+    if value is None or value == 'null':
+        return []
+    if isinstance(value, (list, tuple)):
+        items = value
+    else:
+        text = str(value).strip()
+        if not text:
+            return []
+        items = _MULTIPLE_PATIENT_SPLIT_RE.split(text)
+    names = []
+    for item in items:
+        if item is None:
+            continue
+        name = str(item).strip().strip('*"\'').strip()
+        if not name or name.lower() == 'null':
+            continue
+        names.append(name)
+    return names
+
+
+def _is_generic_patient_label(name):
+    """True for species/role labels (Horse, Patient) rather than a proper name."""
+    if not name:
+        return True
+    text = str(name).strip()
+    # "Horse (mason)" / "Horse - mason" → evaluate the leading label
+    core = re.sub(r'\s*[\(\[/\-].*$', '', text).strip()
+    words = core.lower().split()
+    if not words:
+        return True
+    return all(w in _GENERIC_PATIENT_LABELS for w in words)
+
+
+def _normalize_patient_animal_name(info):
+    """Keep the party slot only when the document is about exactly one named animal.
+
+    Multi-animal vet statements (Goya + Horse + Noble) must not pick the first name.
+    patient_count is the fact; omitting Party is grammar owned by code.
+    """
+    if not info:
+        return info
+    logger = logging.getLogger(__name__)
+    original = info.get('patient_animal_name')
+    count = _patient_count_value(info)
+    names = _patient_name_tokens(original)
+    proper = [n for n in names if not _is_generic_patient_label(n)]
+
+    drop_reason = None
+    if count is not None and count != 1:
+        drop_reason = f'patient_count={count}'
+    elif len(proper) != 1:
+        drop_reason = f'names={names!r}'
+
+    if drop_reason:
+        if original:
+            logger.info(
+                f"Dropped patient_animal_name {original!r} ({drop_reason})"
+            )
+        info['patient_animal_name'] = None
+        return info
+
+    info['patient_animal_name'] = proper[0]
+    return info
+
+
+def _strip_opaque_qualifier_tokens(info):
+    """Remove invoice-id / hash fragments from a model- or fallback-provided title.
+
+    Re-renaming `Starlink Inv Wmurqrb BZK 7455 …` must not keep Wmurqrb/BZK even
+    if the model echoes the current filename. Leftover type synonyms (Inv) drop too.
+    """
+    if not info:
+        return info
+    title = _raw_qualifier(info)
+    if not title:
+        return info
+    words = title.split()
+    kept = [
+        w for w in words
+        if not _is_pure_hex_token(w) and not _is_opaque_topic_token(w)
+    ]
+    if kept == words:
+        return info
+
+    logger = logging.getLogger(__name__)
+    leftover = [w for w in kept if w.lower() not in _FILENAME_TYPE_SYNONYMS
+                and w.lower() not in _GENERIC_TITLE_WORDS]
+    if not leftover:
+        logger.info(f"Dropped document_title {title!r} (opaque download tokens)")
+        info['document_title'] = None
+        if 'qualifier' in info:
+            info['qualifier'] = None
+        return info
+
+    new_title = ' '.join(kept)
+    logger.info(f"Stripped opaque tokens from document_title {title!r} → {new_title!r}")
+    info['document_title'] = new_title
+    return info
+
+
 def _sanitize_document_fields(info):
     """Sanitize account and invoice fields based on document type"""
     logger = logging.getLogger(__name__)
@@ -1587,6 +2202,10 @@ def _sanitize_document_fields(info):
     if info.get('document_type') in ['Receipt', 'Confirmation']:
         info['invoice_number'] = None
 
+    # Drop invoice-id / hash fragments copied into document_title (re-rename of a
+    # junked portal name, or a model that echoed the download id).
+    _strip_opaque_qualifier_tokens(info)
+
     # Premise labels only for multi-service utilities — drop for bank/toll/etc.
     if _should_drop_premise_qualifier(info):
         dropped = _raw_qualifier(info)
@@ -1597,6 +2216,9 @@ def _sanitize_document_fields(info):
             f"Dropped premise-style document_title {dropped!r} "
             f"(vendor={info.get('business_name')!r}, account_type={info.get('account_type')!r})"
         )
+
+    # Party slot: single named patient/animal only
+    _normalize_patient_animal_name(info)
 
 
 def _clean_and_validate_fields(info):
@@ -1761,13 +2383,9 @@ def _build_filename_parts(fields, file_ext):
     include_account_type = bool(
         account_type and account_type.lower() not in _EXCLUDED_ACCOUNT_TYPES
     )
-    is_portfolio = include_account_type and account_type.lower() == 'portfolio'
 
-    if is_portfolio:
-        # Multi-account portfolio: type only, no last-4
-        filename_parts = [business_name, account_type, display_topic]
-    elif include_account_type and account_last_4:
-        # Bank/CC style: type + last 4
+    if include_account_type and account_last_4:
+        # Bank/CC/portfolio-with-primary-id: type + last 4
         filename_parts = [business_name, account_type, display_topic, account_last_4]
     elif account_last_4:
         # Utility etc.: last-4 without a typed account category
@@ -1988,8 +2606,11 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     if extract_from_original_image and extraction_file != processing_file:
         logger.info(f"Extracting facts from original image: {os.path.basename(extraction_file)}")
     info = extract_invoice_info(extraction_file, all_pages=all_pages, filename_hint=filename_hint)
-    # Filename hint safety net — recover qualifier if the model left it null
+    # Filename hint safety net — recover qualifier / account last-4 if the model
+    # left them null (or sliced a hyphenated brokerage id differently than the
+    # vendor download name). Runs before sanitization so Receipt still drops last-4.
     _apply_filename_hint_fallback(info, filename_hint)
+    _apply_filename_account_id_fallback(info, filename_hint)
     _sanitize_document_fields(info)
     fields = _clean_and_validate_fields(info)
 

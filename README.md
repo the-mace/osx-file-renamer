@@ -230,9 +230,18 @@ Examples:
 - `Chase Checking Statement 4521 20240115.pdf`
 - `National Grid Barn 5018 20260729.pdf`
 - `Tesla Portfolio Statement 20231231.pdf`
+- `Edward Jones IRA Statement 2865 20260828.pdf`
+- `Edward Jones Portfolio Statement 8377 20260828.pdf`
 - `Fidelity Trade Confirmation 20260731.pdf`
+- `Starlink Invoice 7455 20260917.pdf` (portal invoice ids like `INV-DF-US-PT0…` are not titles)
+- `X Money Money Market Statement 8011 20260930.pdf` (account number in the footer, even past page 2)
 - `Dr Smith Invoice ACS12B4 20240115.pdf`
 - `Vet Clinic Invoice - Whiskers 20240110.pdf`
+- `Equine Therapies Invoice 2384 20260819.pdf` (multi-animal statement — no horse name)
+- `Travelers Workers Compensation 4070 20260901.pdf` (copy the labeled policy line; do not guess Auto/Property from the insurer brand)
+- `USAA Auto 7101 20261005.pdf` (policy line "NJ Auto 7101"; the bank account being debited is not the id)
+
+**Party** is a single patient/animal name on vet invoices. It is omitted when the document covers more than one animal.
 
 Short vendor names (Amex, Chase), low-PII account ids (last-4), and lowercase extensions are enforced in code.
 

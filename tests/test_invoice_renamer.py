@@ -588,6 +588,7 @@ class TestRenameInvoiceConversion:
         assert _select_display_topic('Alaska Cruise', 'Itinerary', 'Alaska Cruise Itinerary') == 'Itinerary'
         assert _select_display_topic('IRS', 'Notice', 'Tax Delinquent Notice') == 'Tax Delinquent'
         assert _select_display_topic('Acme Insurance', 'Notice', 'Automobile Policy Packet') == 'Automobile Policy Packet'
+        assert _select_display_topic('Travelers', 'Statement', 'Workers Compensation') == 'Workers Compensation'
         assert _select_display_topic('Bank', 'Statement', None) == 'Statement'
         # Utility premise labels replace Statement (not "Barn Statement")
         assert _select_display_topic('National Grid', 'Statement', 'Barn') == 'Barn'
@@ -851,6 +852,7 @@ class TestRenameInvoiceConversion:
             _is_hash_like_basename,
             _topic_words_from_filename_hint,
             _apply_filename_hint_fallback,
+            _apply_filename_account_id_fallback,
             _sanitize_document_fields,
             _clean_and_validate_fields,
             _build_filename_parts,
@@ -887,6 +889,10 @@ class TestRenameInvoiceConversion:
         assert info['document_title'] is None
         _apply_filename_hint_fallback(info, _original_filename_hint(hash_name))
         assert info['document_title'] is None
+        _apply_filename_account_id_fallback(info, soup)
+        assert info['account_last_4'] == '8324'
+        _apply_filename_account_id_fallback(info, _original_filename_hint(hash_name))
+        assert info['account_last_4'] == '8324'
 
         _sanitize_document_fields(info)
         fields = _clean_and_validate_fields(info)
@@ -951,6 +957,87 @@ class TestRenameInvoiceConversion:
         assert _original_filename_hint('TradeConfirmation07312026.pdf') == 'Trade Confirmation'
         assert not _is_hash_like_basename('TradeConfirmation07312026')
         assert not _is_hash_like_basename('RavenInvoice30928720')
+
+    def test_original_filename_hint_rejects_starlink_invoice_id(self):
+        """Starlink/Stripe invoice-id download names must not become titles.
+
+        Real-world Starlink download:
+          INV-DF-US-PT0TP1WMURQRB6BZK1.pdf
+        Previously camelCase/digit-split → 'Inv Wmurqrb BZK' stuffed into document_title.
+        """
+        from invoice_renamer import (
+            _original_filename_hint,
+            _is_hash_like_basename,
+            _is_opaque_topic_token,
+            _topic_words_from_filename_hint,
+            _apply_filename_hint_fallback,
+            _sanitize_document_fields,
+            _clean_and_validate_fields,
+            _build_filename_parts,
+        )
+
+        token = 'INV-DF-US-PT0TP1WMURQRB6BZK1'
+        assert _is_hash_like_basename(token)
+        assert _original_filename_hint(f'{token}.pdf') is None
+        assert _is_opaque_topic_token('WMURQRB')
+        assert _is_opaque_topic_token('BZK')
+        assert not _is_opaque_topic_token('Tax')
+        assert not _is_opaque_topic_token('Raven')
+        assert not _is_opaque_topic_token('Barn')
+        # Even if the split hint leaked through, leftover fragments are not topics
+        soup = 'INV DF US PT 0 TP 1 WMURQRB 6 BZK 1'
+        assert _topic_words_from_filename_hint(soup, 'Starlink', 'Invoice') is None
+
+        info = {
+            'business_name': 'Starlink',
+            'document_type': 'Invoice',
+            'document_title': None,
+            'invoice_date': '2026-09-17',
+            'invoice_number': token,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '7455',
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        _apply_filename_hint_fallback(info, soup)
+        assert info['document_title'] is None
+        _apply_filename_hint_fallback(info, _original_filename_hint(f'{token}.pdf'))
+        assert info['document_title'] is None
+
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == 'Starlink Invoice 7455 20260917.pdf'
+        assert 'Wmurqrb' not in filename
+        assert 'BZK' not in filename
+        assert 'Inv ' not in filename
+
+        # Re-rename of the already-junked name: model echoed the current title
+        junked = {
+            'business_name': 'Starlink',
+            'document_type': 'Invoice',
+            'document_title': 'Inv Wmurqrb BZK',
+            'invoice_date': '2026-09-17',
+            'invoice_number': token,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '7455',
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        _sanitize_document_fields(junked)
+        assert junked['document_title'] is None
+        junk_fields = _clean_and_validate_fields(junked)
+        junk_name, _ = _build_filename_parts(junk_fields, '.pdf')
+        assert junk_name == 'Starlink Invoice 7455 20260917.pdf'
+
+        # Readable names and masked brokerage downloads still produce hints
+        assert _original_filename_hint('TradeConfirmation07312026.pdf') == 'Trade Confirmation'
+        assert _original_filename_hint('XXXX2865-8_2026-edj-statement.pdf') == 'XXXX 2865 8 2026 edj statement'
+        assert not _is_hash_like_basename('FORM-1040-US-TAX')
 
     def test_filename_hint_fallback_fills_trade_confirmation_title(self):
         """When LLM leaves title null, recover 'Trade' from TradeConfirmation filename."""
@@ -1162,6 +1249,55 @@ class TestRenameInvoiceConversion:
         # Assembly rules must not live in the prompt
         assert 'replaces document_type' not in base
         assert 'Trade Confirmation …' not in base
+        # Multi-animal vet bills: extract count + names; code omits Party
+        assert 'patient_count' in base
+        assert 'never just the first' in base
+
+    def test_build_extraction_prompt_keeps_invoices_with_payment_lines(self):
+        """Bills with due date stay Invoice; Receipt is only standalone proof of payment.
+
+        Berkowitz-style invoices include 'PAYMENTS RECEIVED THIS PERIOD' and
+        'AUTO PAY ACCOUNT RECEIPT' while still billing new charges. The old hint
+        example 'payment received → Receipt' taught the model to mislabel those.
+        """
+        from invoice_renamer import _build_extraction_prompt, INVOICE_EXTRACTION_PROMPT
+
+        base = _build_extraction_prompt(None)
+        assert base == INVOICE_EXTRACTION_PROMPT
+        assert 'Invoice when the page is a bill' in base
+        assert 'auto pay receipt' in base
+        assert 'Receipt only for standalone proof of payment' in base
+        assert 'no amount due' in base
+
+        hint = _build_extraction_prompt('Billing 01 8918 4 3353')
+        assert 'Content wins' in hint
+        assert 'stays Invoice' in hint
+        assert 'no amount due' in hint
+        # Old wording that flipped billed invoices to Receipt
+        assert 'page says payment received → Receipt' not in hint
+
+    def test_build_extraction_prompt_grounds_insurance_policy_line(self):
+        """Insurance titles copy the labeled POLICY line; do not seed Auto/Property.
+
+        Travelers WC bills list Workers Compensation on page 2. The old prompt
+        example 'Auto Property Insurance' plus Travelers' auto-insurer brand
+        produced Travelers Auto Property Insurance 4070 … instead of
+        Travelers Workers Compensation 4070 ….
+        """
+        from invoice_renamer import _build_extraction_prompt, INVOICE_EXTRACTION_PROMPT
+
+        base = _build_extraction_prompt(None)
+        assert base == INVOICE_EXTRACTION_PROMPT
+        assert 'Workers Compensation' in base
+        assert 'POLICY' in base
+        assert 'NJ Auto 7101' in base
+        assert 'ending in' in base
+        assert 'insurer brand' in base
+        assert 'United Services Automobile Association' in base
+        assert 'guessed bundle' in base
+        # Prompt-primed coverage types that caused the Travelers miss
+        assert 'Auto Property Insurance' not in base
+        assert 'Auto Policy' not in base
 
     def test_naming_grammar_golden_table(self):
         """Golden filenames from cleaned fields — assembly policy source of truth."""
@@ -1180,6 +1316,8 @@ class TestRenameInvoiceConversion:
             ('National Grid', 'Statement', 'Barn', 'Barn'),
             ('Bank', 'Statement', None, 'Statement'),
             ('Acme', 'Certificate', 'Birth', 'Birth Certificate'),
+            ('Travelers', 'Statement', 'Workers Compensation', 'Workers Compensation'),
+            ('USAA', 'Statement', 'Auto', 'Auto'),
         ]
         for vendor, dtype, title, expected in cases:
             assert _select_display_topic(vendor, dtype, title) == expected, (
@@ -1267,12 +1405,155 @@ class TestRenameInvoiceConversion:
                 },
                 'Tesla Portfolio Statement 20231231.pdf',
             ),
+            (
+                {
+                    'business_name': 'Edward Jones',
+                    'document_type': 'Statement',
+                    'document_title': None,
+                    'invoice_date': '2026-08-28',
+                    'invoice_number': None,
+                    'patient_animal_name': None,
+                    'account_type': 'Portfolio',
+                    'account_last_4': '8377',
+                },
+                'Edward Jones Portfolio Statement 8377 20260828.pdf',
+            ),
+            (
+                {
+                    'business_name': 'Edward Jones',
+                    'document_type': 'Statement',
+                    'document_title': None,
+                    'invoice_date': '2026-08-28',
+                    'invoice_number': None,
+                    'patient_animal_name': None,
+                    'account_type': 'IRA',
+                    'account_last_4': '609-92865-1-7',
+                },
+                'Edward Jones IRA Statement 2865 20260828.pdf',
+            ),
+            (
+                {
+                    'business_name': 'Veterinary Clinic',
+                    'document_type': 'Invoice',
+                    'document_title': None,
+                    'invoice_date': '2024-01-15',
+                    'invoice_number': '9876',
+                    'patient_animal_name': 'Fluffy',
+                    'patient_count': 1,
+                    'account_type': None,
+                    'account_last_4': None,
+                },
+                'Veterinary Clinic Invoice - Fluffy 9876 20240115.pdf',
+            ),
+            (
+                {
+                    'business_name': 'Equine Therapies',
+                    'document_type': 'Invoice',
+                    'document_title': None,
+                    'invoice_date': '2026-08-19',
+                    'invoice_number': '2384',
+                    'patient_animal_name': 'Goya',
+                    'patient_count': 3,
+                    'account_type': None,
+                    'account_last_4': None,
+                },
+                'Equine Therapies Invoice 2384 20260819.pdf',
+            ),
+            (
+                {
+                    'business_name': 'Travelers',
+                    'document_type': 'Statement',
+                    'document_title': 'Workers Compensation',
+                    'invoice_date': '2026-09-01',
+                    'invoice_number': None,
+                    'patient_animal_name': None,
+                    'account_type': None,
+                    'account_last_4': '4070',
+                },
+                'Travelers Workers Compensation 4070 20260901.pdf',
+            ),
+            (
+                {
+                    'business_name': 'USAA',
+                    'document_type': 'Statement',
+                    'document_title': 'Auto',
+                    'invoice_date': '2026-10-05',
+                    'invoice_number': '008585588-PC001',
+                    'patient_animal_name': None,
+                    'account_type': None,
+                    'account_last_4': '7101',
+                },
+                'USAA Auto 7101 20261005.pdf',
+            ),
         ]
         for info, expected in golden:
             _sanitize_document_fields(info)
             fields = _clean_and_validate_fields(info)
             filename, _ = _build_filename_parts(fields, '.pdf')
             assert filename == expected, f'got {filename!r} expected {expected!r}'
+
+    def test_patient_animal_party_single_vs_multiple(self):
+        """Party is a single named animal; multi-animal vet bills omit it."""
+        from invoice_renamer import (
+            _normalize_patient_animal_name,
+            _is_generic_patient_label,
+            _sanitize_document_fields,
+            _clean_and_validate_fields,
+            _build_filename_parts,
+        )
+
+        assert _is_generic_patient_label('Horse') is True
+        assert _is_generic_patient_label('Horse (mason)') is True
+        assert _is_generic_patient_label('Patient') is True
+        assert _is_generic_patient_label('Goya') is False
+        assert _is_generic_patient_label('Noble') is False
+
+        # Single named animal — keep
+        single = {'patient_animal_name': 'Goya', 'patient_count': 1}
+        _normalize_patient_animal_name(single)
+        assert single['patient_animal_name'] == 'Goya'
+
+        # Backward compatible: name without count still kept
+        no_count = {'patient_animal_name': 'Fluffy'}
+        _normalize_patient_animal_name(no_count)
+        assert no_count['patient_animal_name'] == 'Fluffy'
+
+        # Count says multiple even if the model picked the first horse
+        first_of_many = {'patient_animal_name': 'Goya', 'patient_count': 3}
+        _normalize_patient_animal_name(first_of_many)
+        assert first_of_many['patient_animal_name'] is None
+
+        # Listed names without count
+        listed = {'patient_animal_name': ['Goya', 'Noble']}
+        _normalize_patient_animal_name(listed)
+        assert listed['patient_animal_name'] is None
+
+        joined = {'patient_animal_name': 'Goya and Noble'}
+        _normalize_patient_animal_name(joined)
+        assert joined['patient_animal_name'] is None
+
+        # Generic species label is not a party name
+        generic = {'patient_animal_name': 'Horse (mason)', 'patient_count': 1}
+        _normalize_patient_animal_name(generic)
+        assert generic['patient_animal_name'] is None
+
+        # End-to-end filename: Equine Therapies statement with 3 horses
+        info = {
+            'business_name': 'Equine Therapies',
+            'document_type': 'Invoice',
+            'document_title': None,
+            'invoice_date': '2026-08-19',
+            'invoice_number': '2384',
+            'patient_animal_name': 'Goya',
+            'patient_count': 3,
+            'account_type': None,
+            'account_last_4': None,
+        }
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == 'Equine Therapies Invoice 2384 20260819.pdf'
+        assert 'Goya' not in filename
 
     def test_qualifier_alias_accepted(self):
         """Accept 'qualifier' as alias for document_title from model output."""
@@ -1355,6 +1636,380 @@ class TestRenameInvoiceConversion:
         }
         _sanitize_document_fields(info)
         assert info['document_title'] is None
+
+
+class TestAccountIdNormalization:
+    """Hyphenated brokerage last-4s and filename-hint account id recovery."""
+
+    def test_normalize_hyphenated_brokerage_uses_five_digit_body(self):
+        from invoice_renamer import _normalize_account_id
+
+        assert _normalize_account_id('609-92865-1-7') == '2865'
+        assert _normalize_account_id('369-08377-1-5') == '8377'
+        assert _normalize_account_id('92865-1-7') == '2865'
+        assert _normalize_account_id('609 - 92865 - 1 - 7') == '2865'
+        # Plain last-4 / card / short alnum still work
+        assert _normalize_account_id('8651') == '8651'
+        assert _normalize_account_id('1234567890') == '7890'
+        assert _normalize_account_id('xx-1234') == '1234'
+        assert _normalize_account_id('A12B') == 'A12B'
+        assert _normalize_account_id('12') is None
+        assert _normalize_account_id(None) is None
+
+    def test_account_id_from_filename_hint_masked_and_isolated(self):
+        from invoice_renamer import (
+            _account_id_from_filename_hint,
+            _original_filename_hint,
+        )
+
+        ej_ira = _original_filename_hint('XXXX2865-8_2026-edj-statement.pdf')
+        assert ej_ira == 'XXXX 2865 8 2026 edj statement'
+        assert _account_id_from_filename_hint(ej_ira) == ('2865', 'high')
+
+        ej_port = _original_filename_hint('XXXX8377-8_2026-edj-statement.pdf')
+        assert _account_id_from_filename_hint(ej_port) == ('8377', 'high')
+
+        usaa = _original_filename_hint(
+            '2026-08-29_SIGNATURE_VISA_427082_0245_AUG_2026_STATEMENT.pdf'
+        )
+        assert _account_id_from_filename_hint(usaa) == ('0245', 'medium')
+
+        assert _account_id_from_filename_hint('Amex CC Statement 1000') == ('1000', 'medium')
+        assert _account_id_from_filename_hint('Trade Confirmation') == (None, None)
+        # Year-only 4-digit is not an account id
+        assert _account_id_from_filename_hint('Statement 2026') == (None, None)
+        # Camera defaults never become hints
+        assert _original_filename_hint('IMG_1234.jpg') is None
+        assert _account_id_from_filename_hint(_original_filename_hint('IMG_1234.jpg')) == (None, None)
+
+    def test_filename_account_id_fallback_replaces_wrong_brokerage_slice(self):
+        from invoice_renamer import (
+            _apply_filename_account_id_fallback,
+            _original_filename_hint,
+        )
+
+        hint = _original_filename_hint('XXXX2865-8_2026-edj-statement.pdf')
+        info = {
+            'business_name': 'Edward Jones',
+            'document_type': 'Statement',
+            'account_type': 'IRA',
+            'account_last_4': '8651',
+        }
+        _apply_filename_account_id_fallback(info, hint)
+        assert info['account_last_4'] == '2865'
+
+        # Full hyphenated number already normalizes to the same last-4 — leave it
+        info_full = {'account_last_4': '609-92865-1-7'}
+        _apply_filename_account_id_fallback(info_full, hint)
+        assert info_full['account_last_4'] == '609-92865-1-7'
+
+    def test_filename_account_id_fallback_fills_missing_portfolio_id(self):
+        from invoice_renamer import (
+            _apply_filename_account_id_fallback,
+            _original_filename_hint,
+        )
+
+        hint = _original_filename_hint('XXXX8377-8_2026-edj-statement.pdf')
+        info = {
+            'business_name': 'Edward Jones',
+            'document_type': 'Statement',
+            'account_type': 'Portfolio',
+            'account_last_4': None,
+        }
+        _apply_filename_account_id_fallback(info, hint)
+        assert info['account_last_4'] == '8377'
+
+    def test_filename_account_id_fallback_weak_token_does_not_override_model(self):
+        from invoice_renamer import _apply_filename_account_id_fallback
+
+        info = {
+            'business_name': 'Chase',
+            'document_type': 'Statement',
+            'account_type': 'Checking',
+            'account_last_4': '1234',
+        }
+        _apply_filename_account_id_fallback(info, 'Chase Statement 9999')
+        assert info['account_last_4'] == '1234'
+
+        missing = {
+            'business_name': 'Chase',
+            'document_type': 'Statement',
+            'account_type': 'Checking',
+            'account_last_4': None,
+        }
+        _apply_filename_account_id_fallback(missing, 'Chase Statement 9999')
+        assert missing['account_last_4'] == '9999'
+
+    def test_labeled_account_number_footer_ignores_routing(self):
+        """X Money puts the account number under a footer column, past page 1.
+
+        Routing number shares the row. Last 4 comes from the account column.
+        """
+        from invoice_renamer import _parse_labeled_account_last4
+
+        savings = (
+            "                    Routing Number                        Account Number                         Issuing Bank\n"
+            "                    021214891                             363240448011                           Cross River Bank\n"
+        )
+        spending = (
+            "                    Routing Number                       Account Number                        Issuing Bank\n"
+            "                    021214891                            328226873029                          Cross River Bank\n"
+        )
+        assert _parse_labeled_account_last4(savings) == '8011'
+        assert _parse_labeled_account_last4(spending) == '3029'
+        # Blank line between the header and the values still counts
+        spaced = savings.replace('Account Number                         Issuing Bank\n', 'Account Number                         Issuing Bank\n\n')
+        assert _parse_labeled_account_last4(spaced) == '8011'
+
+    def test_labeled_account_number_inline_and_rejects_noise(self):
+        from invoice_renamer import _parse_labeled_account_last4
+
+        assert _parse_labeled_account_last4(
+            "Account Number: 363240448011\n"
+        ) == '8011'
+        assert _parse_labeled_account_last4(
+            "Account #: 5291427350\n"
+        ) == '7350'
+        assert _parse_labeled_account_last4(
+            "Account No. 609-92865-1-7\n"
+        ) == '2865'
+        # "Account Notice" is not an account-number label
+        assert _parse_labeled_account_last4("Account Notice 20260930\n") is None
+        # Routing column only — nothing under Account Number
+        routing_only = (
+            "Routing Number                        Account Number\n"
+            "021214891                             Cross River Bank\n"
+        )
+        assert _parse_labeled_account_last4(routing_only) is None
+        assert _parse_labeled_account_last4("") is None
+        assert _parse_labeled_account_last4(None) is None
+
+    def test_fill_account_last4_from_pdf_replaces_short_fragment(self):
+        """Model returned '011' (3 digits). Footer has the real account."""
+        from invoice_renamer import _fill_account_last4_from_pdf
+
+        footer = (
+            "Routing Number                        Account Number                         Issuing Bank\n"
+            "021214891                             363240448011                           Cross River Bank\n"
+        )
+        short = {
+            'document_type': 'Statement',
+            'account_type': 'Money Market',
+            'account_last_4': '011',
+        }
+        with patch('invoice_renamer._pdf_text', return_value=footer):
+            _fill_account_last4_from_pdf(short, '/tmp/x-money.pdf')
+        assert short['account_last_4'] == '8011'
+
+        # Model zero-padded the 3-digit fragment to "0011"
+        padded = {
+            'document_type': 'Statement',
+            'account_type': 'Money Market',
+            'account_last_4': '0011',
+        }
+        with patch('invoice_renamer._pdf_text', return_value=footer):
+            _fill_account_last4_from_pdf(padded, '/tmp/x-money.pdf')
+        assert padded['account_last_4'] == '8011'
+
+        missing = {
+            'document_type': 'Statement',
+            'account_type': 'Money Market',
+            'account_last_4': None,
+        }
+        with patch('invoice_renamer._pdf_text', return_value=footer):
+            _fill_account_last4_from_pdf(missing, '/tmp/x-money.pdf')
+        assert missing['account_last_4'] == '8011'
+
+        # A usable last-4 from the model wins
+        kept = {
+            'document_type': 'Statement',
+            'account_type': 'Checking',
+            'account_last_4': '1234',
+        }
+        with patch('invoice_renamer._pdf_text', return_value=footer) as pdf_text:
+            _fill_account_last4_from_pdf(kept, '/tmp/x-money.pdf')
+        assert kept['account_last_4'] == '1234'
+        pdf_text.assert_not_called()
+
+        # A real last-4 that starts with 0 is not a padded tail of a different account
+        fidelity = {
+            'document_type': 'Statement',
+            'account_type': 'Brokerage',
+            'account_last_4': '0961',
+        }
+        with patch('invoice_renamer._pdf_text', return_value=footer):
+            _fill_account_last4_from_pdf(fidelity, '/tmp/x-money.pdf')
+        assert fidelity['account_last_4'] == '0961'
+
+        # Receipts are not account-number documents
+        receipt = {
+            'document_type': 'Receipt',
+            'account_type': None,
+            'account_last_4': None,
+        }
+        with patch('invoice_renamer._pdf_text', return_value=footer) as pdf_text:
+            _fill_account_last4_from_pdf(receipt, '/tmp/x-money.pdf')
+        assert receipt['account_last_4'] is None
+        pdf_text.assert_not_called()
+
+
+class TestInsurancePolicyLine:
+    """Labeled policy lines fill the topic. The insurer brand and the draft account do not."""
+
+    USAA_BILL = """\
+                   United Services Automobile Association
+                                                                                                       INSURANCE BILL
+                                                                                                                     Statement Date: 10/05/2026
+Policy Being Billed (in USD)                                            Policy Balance                       Min Due Now
+NJ Auto 7101
+                                                                                1,502.77                             187.84
+06/16/26 to 06/16/27
+       Your bank account ending in 0529 will be debited for $187.84 on November 1, 2026.
+Three-month Policy Payment Forecast
+NJ Auto 7101
+ 2023 CHRYSLER
+"""
+
+    def test_parse_usaa_auto_policy_line(self):
+        from invoice_renamer import _parse_labeled_policies, _payment_account_last4
+
+        assert _parse_labeled_policies(self.USAA_BILL) == [('Auto', '7101')]
+        assert _payment_account_last4(self.USAA_BILL) == '0529'
+        # Legal name is not a policy line
+        assert _parse_labeled_policies(
+            "United Services Automobile Association\nINSURANCE BILL\n"
+        ) == []
+
+    def test_parse_workers_compensation_and_skip_vehicle_year(self):
+        from invoice_renamer import _parse_policy_product_line, _parse_labeled_policies
+
+        assert _parse_policy_product_line('Workers Compensation') == ('Workers Compensation', None)
+        assert _parse_policy_product_line('POLICY: Workers Compensation') == (
+            'Workers Compensation', None,
+        )
+        assert _parse_policy_product_line('NJ Auto 7101') == ('Auto', '7101')
+        assert _parse_policy_product_line('Auto 2023') == ('Auto', None)
+        assert _parse_policy_product_line('United Services Automobile Association') is None
+        text = "POLICY\nWorkers Compensation\nPolicy Number: WC-4070\n"
+        assert _parse_labeled_policies(text) == [('Workers Compensation', None)]
+        # "policies" in boilerplate is not a label
+        assert _parse_labeled_policies(
+            "changes that are needed to your policies.\nAuto\n"
+        ) == []
+
+    def test_fill_usaa_bill_uses_policy_line_not_draft_account(self):
+        """The live miss: Statement, no title, last-4 0529 from the bank draft."""
+        from invoice_renamer import (
+            _fill_insurance_policy_from_pdf,
+            _sanitize_document_fields,
+            _clean_and_validate_fields,
+            _build_filename_parts,
+        )
+
+        info = {
+            'business_name': 'USAA',
+            'document_type': 'Statement',
+            'document_title': None,
+            'invoice_date': '2026-10-05',
+            'invoice_number': '008585588-PC001',
+            'patient_animal_name': None,
+            'patient_count': None,
+            'account_type': None,
+            'account_last_4': '0529',
+        }
+        with patch('invoice_renamer._pdf_text', return_value=self.USAA_BILL):
+            _fill_insurance_policy_from_pdf(info, '/tmp/usaa.pdf')
+        assert info['document_title'] == 'Auto'
+        assert info['account_last_4'] == '7101'
+
+        # Member-number last-4 is not the policy id on the labeled line
+        member = dict(info)
+        member['document_title'] = None
+        member['account_last_4'] = '5588'
+        with patch('invoice_renamer._pdf_text', return_value=self.USAA_BILL):
+            _fill_insurance_policy_from_pdf(member, '/tmp/usaa.pdf')
+        assert member['account_last_4'] == '7101'
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == 'USAA Auto 7101 20261005.pdf'
+
+    def test_fill_collapses_state_prefix_and_repeated_account_type(self):
+        """Model returned title NJ Auto and account_type Auto for the same line."""
+        from invoice_renamer import (
+            _fill_insurance_policy_from_pdf,
+            _sanitize_document_fields,
+            _clean_and_validate_fields,
+            _build_filename_parts,
+        )
+
+        info = {
+            'business_name': 'USAA',
+            'document_type': 'Statement',
+            'document_title': 'NJ Auto',
+            'invoice_date': '2026-10-05',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'Auto',
+            'account_last_4': '7101',
+        }
+        with patch('invoice_renamer._pdf_text', return_value=self.USAA_BILL):
+            _fill_insurance_policy_from_pdf(info, '/tmp/usaa.pdf')
+        assert info['document_title'] == 'Auto'
+        assert info['account_type'] is None
+        assert info['account_last_4'] == '7101'
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == 'USAA Auto 7101 20261005.pdf'
+
+    def test_fill_keeps_labeled_coverage_over_brand_guess(self):
+        from invoice_renamer import _fill_insurance_policy_from_pdf
+
+        text = "POLICY\nWorkers Compensation\nPolicy Number: 4070\n"
+        info = {
+            'document_type': 'Statement',
+            'document_title': 'Auto Property',
+            'account_last_4': '4070',
+        }
+        with patch('invoice_renamer._pdf_text', return_value=text):
+            _fill_insurance_policy_from_pdf(info, '/tmp/travelers.pdf')
+        assert info['document_title'] == 'Workers Compensation'
+        assert info['account_last_4'] == '4070'
+
+    def test_fill_leaves_two_policies_alone(self):
+        from invoice_renamer import _fill_insurance_policy_from_pdf
+
+        text = (
+            "Policy Being Billed\nNJ Auto 7101\n"
+            "Policy Being Billed\nHomeowners 2201\n"
+        )
+        info = {
+            'document_type': 'Statement',
+            'document_title': None,
+            'account_last_4': '0529',
+        }
+        with patch('invoice_renamer._pdf_text', return_value=text):
+            _fill_insurance_policy_from_pdf(info, '/tmp/bundle.pdf')
+        assert info['document_title'] is None
+        assert info['account_last_4'] == '0529'
+
+    def test_fill_drops_draft_account_when_policy_line_has_no_id(self):
+        from invoice_renamer import _fill_insurance_policy_from_pdf
+
+        text = (
+            "POLICY\nWorkers Compensation\n"
+            "Your bank account ending in 0529 will be debited.\n"
+        )
+        info = {
+            'document_type': 'Statement',
+            'document_title': None,
+            'account_last_4': '0529',
+        }
+        with patch('invoice_renamer._pdf_text', return_value=text):
+            _fill_insurance_policy_from_pdf(info, '/tmp/wc.pdf')
+        assert info['document_title'] == 'Workers Compensation'
+        assert info['account_last_4'] is None
 
 
 class TestMain:

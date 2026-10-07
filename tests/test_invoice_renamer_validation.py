@@ -539,6 +539,103 @@ class TestRenameInvoiceAccountNumberValidation:
         assert not (tmp_path / "Fidelity Portfolio Investment 20260731.pdf").exists()
 
     @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_hyphenated_brokerage_account_uses_body_last4(self, mock_extract, tmp_path):
+        """Edward Jones AAA-BBBBB-C-D uses last 4 of the 5-digit body, not the tail."""
+        test_file = tmp_path / "statement.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'Edward Jones',
+            'document_type': 'Statement',
+            'invoice_date': '2026-08-28',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'IRA',
+            'account_last_4': '609-92865-1-7',
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "Edward Jones IRA Statement 2865 20260828.pdf"
+        assert expected.exists()
+        assert not (tmp_path / "Edward Jones IRA Statement 6517 20260828.pdf").exists()
+        assert not (tmp_path / "Edward Jones IRA Statement 8651 20260828.pdf").exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_filename_account_id_overrides_wrong_slice(self, mock_extract, tmp_path):
+        """Masked download name XXXX2865-8 wins over a wrong 8651 model slice."""
+        test_file = tmp_path / "XXXX2865-8_2026-edj-statement.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'Edward Jones',
+            'document_type': 'Statement',
+            'invoice_date': '2026-08-28',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'IRA',
+            'account_last_4': '8651',
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "Edward Jones IRA Statement 2865 20260828.pdf"
+        assert expected.exists()
+        assert not (tmp_path / "Edward Jones IRA Statement 8651 20260828.pdf").exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_portfolio_keeps_filename_primary_account_id(self, mock_extract, tmp_path):
+        """Portfolio overview keeps the primary-account last-4 from the download name."""
+        test_file = tmp_path / "XXXX8377-8_2026-edj-statement.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'Edward Jones',
+            'document_type': 'Statement',
+            'invoice_date': '2026-08-28',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'Portfolio',
+            'account_last_4': None,
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "Edward Jones Portfolio Statement 8377 20260828.pdf"
+        assert expected.exists()
+        assert not (tmp_path / "Edward Jones Portfolio Statement 20260828.pdf").exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_receipt_still_drops_filename_account_id(self, mock_extract, tmp_path):
+        """Receipt sanitization strips last-4 even when the original name had one."""
+        test_file = tmp_path / "XXXX1234-8_store-receipt.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'Store',
+            'document_type': 'Receipt',
+            'invoice_date': '2026-08-28',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected = tmp_path / "Store Receipt 20260828.pdf"
+        assert expected.exists()
+        assert not (tmp_path / "Store Receipt 1234 20260828.pdf").exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_business_investment_account_abbreviated(self, mock_extract, tmp_path):
         """Verbose BofA product name normalizes to Investment."""
         test_file = tmp_path / "test.pdf"

@@ -64,6 +64,31 @@ class TestRenameInvoiceBasic:
         assert (tmp_path / expected_name).exists()
 
     @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_omits_patient_when_multiple_animals(self, mock_extract, tmp_path):
+        """Multi-horse vet statements must not pick the first horse as Party."""
+        test_file = tmp_path / "equine.pdf"
+        test_file.write_text("test content")
+
+        mock_extract.return_value = {
+            'business_name': 'Equine Therapies',
+            'document_type': 'Invoice',
+            'document_title': None,
+            'invoice_date': '2026-08-19',
+            'invoice_number': '2384',
+            'patient_animal_name': 'Goya',
+            'patient_count': 3,
+            'account_type': None,
+            'account_last_4': None,
+        }
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected_name = "Equine Therapies Invoice 2384 20260819.pdf"
+        assert (tmp_path / expected_name).exists()
+        assert not (tmp_path / "Equine Therapies Invoice 2384 - Goya 20260819.pdf").exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_without_date(self, mock_extract, tmp_path):
         """Test renaming when no date available."""
         test_file = tmp_path / "nodoc.pdf"
@@ -111,6 +136,29 @@ class TestRenameInvoiceBasic:
         assert (tmp_path / expected_name).exists()
 
     @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_portfolio_statement_with_last4(self, mock_extract, tmp_path):
+        """Portfolio statements include a primary-account last-4 when known."""
+        test_file = tmp_path / "portfolio.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'Vanguard',
+            'document_type': 'Statement',
+            'invoice_date': '2024-03-31',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'Portfolio',
+            'account_last_4': '8377',
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected_name = "Vanguard Portfolio Statement 8377 20240331.pdf"
+        assert (tmp_path / expected_name).exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_with_document_title(self, mock_extract, tmp_path):
         """Test that document_title is used in filename instead of generic document type."""
         test_file = tmp_path / "policy.pdf"
@@ -133,6 +181,31 @@ class TestRenameInvoiceBasic:
         assert result is True
         expected_name = "Acme Insurance Automobile Policy Packet 20240315.pdf"
         assert (tmp_path / expected_name).exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_travelers_workers_compensation_bill(self, mock_extract, tmp_path):
+        """Travelers WC bills use the labeled policy line, not a guessed Auto/Property bundle."""
+        test_file = tmp_path / "20260909.pdf"
+        test_file.write_text("test content")
+
+        info = {
+            'business_name': 'Travelers',
+            'document_type': 'Statement',
+            'document_title': 'Workers Compensation',
+            'invoice_date': '2026-09-01',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '4070',
+        }
+        mock_extract.return_value = info
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        expected_name = "Travelers Workers Compensation 4070 20260901.pdf"
+        assert (tmp_path / expected_name).exists()
+        assert not (tmp_path / "Travelers Auto Property Insurance 4070 20260901.pdf").exists()
 
     @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_dry_run_mode(self, mock_extract, tmp_path, sample_invoice_info, capsys):
