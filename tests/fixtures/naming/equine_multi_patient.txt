@@ -1,0 +1,8 @@
+Equine Therapies
+Invoice
+Invoice Number: 2384
+Patient: Goya
+Patient: Noble
+Horse: Mason
+Date: 08/19/2026
+Amount Due: $400.00

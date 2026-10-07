@@ -101,6 +101,13 @@ make lint
 - Handles dry-run mode, file moves, and conflict resolution
 - Logging with automatic rotation (logs to temp directory)
 
+#### document_families.py
+
+- Labeled-line parsers for text PDFs. Each family returns facts that overwrite the model.
+- Families: portal invoice, insurance, receipt, brokerage/bank statement date, account number, utility premise, vet patients.
+- A new issuer is a parser plus a redacted text dump in `tests/fixtures/naming/`, not another prompt paragraph.
+- Photos and scans have no `pdftotext` output, so these families no-op and the vision model still names them.
+
 #### llm_client.py
 
 - LLM API client for document analysis (supports Claude, GPT-4, Grok, Gemini, and 100+ models via LiteLLM)
@@ -126,7 +133,7 @@ make lint
 
 4. **Size Management**: Multi-stage compression pipeline (PIL optimization → ImageMagick quality reduction) to meet API limits
 
-5. **Naming Convention** (LLM = facts; Python = grammar):
+5. **Naming Convention** (labeled lines win; LLM fills the rest; Python = grammar):
 
    ```
    Vendor [AccountType] Topic [AccountId] [- Party] [RefId] Date.ext
@@ -139,7 +146,9 @@ make lint
    - Hyphenated brokerage `AAA-BBBBB-C-D` uses last 4 of the 5-digit body (609-92865-1-7 → 2865)
    - Portfolio overviews keep a primary-account last-4 when known
    - Bills with Invoice # / Due Date / new charges stay Invoice even if they list a payment received
-   - Insurance: copy the labeled POLICY line (Workers Compensation, or "NJ Auto 7101" → Auto). Do not invent Auto/Property from the insurer brand. The policy-line id is the account id; a bank account "ending in ####" that will be debited is not the account id
+   - Insurance, account number, statement date, utility premise, and vet patients are read by `document_families` and overwrite the model. The shared prompt does not repeat those rules
+   - Insurance copies the labeled POLICY line (Workers Compensation, or "NJ Auto 7101" → Auto). The policy-line id is the account id; a bank account being debited is not the account id
+   - Completions use temperature 0 (`LLM_TEMPERATURE`) so letterhead vendor strings do not drift between similar pages. Known dual brands collapse in `FILENAME_ABBREVIATIONS` (Sheraton Sand Key Resort → Sheraton, Advantage Propane → Paraco)
    - Party (`patient_animal_name`) is a single named patient/animal; omit when 2+ animals have charges
    - Original filename is a weak signal + code fallback for missing qualifier and account last-4 — not the primary naming brain
    - A labeled Account Number in the PDF text (footer past page 2, or a too-short model fragment) fills last-4. The neighboring routing number is not the account id
@@ -226,7 +235,7 @@ If renames still feel slow or vision API cost becomes an issue, consider these i
 - Hyphenated brokerage numbers: last 4 of the 5-digit body, not the check-digit tail
 - Portfolio packages keep a primary-account last-4 when known
 - Bills with Invoice # / Due Date / new charges stay Invoice even if they list a payment received
-- Insurance: copy the labeled POLICY line (Workers Compensation, or "NJ Auto 7101" → Auto). Do not invent Auto/Property from the insurer brand. The policy-line id is the account id; a bank account being debited is not the account id
+- Insurance: `document_families` copies the labeled POLICY line (Workers Compensation, or "NJ Auto 7101" → Auto). The policy-line id is the account id; a bank account being debited is not the account id
 - Party is a single named patient/animal; omit when 2+ animals have charges
 - Portal invoice-id download names are not titles
 - Priority fields: Vendor → Topic → AccountId → Date

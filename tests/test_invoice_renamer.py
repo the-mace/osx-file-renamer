@@ -216,6 +216,9 @@ class TestCleanFilename:
         assert clean_filename("Bank of America") == "BofA"
         assert clean_filename("JPMorgan Chase") == "Chase"
         assert clean_filename("Citibank") == "Citi"
+        assert clean_filename("Sheraton") == "Sheraton"
+        assert clean_filename("Sheraton Sand Key Resort") == "Sheraton"
+        assert clean_filename("Advantage Propane, A Paraco Company") == "Paraco"
 
 
 class TestFormatDate:
@@ -1276,26 +1279,22 @@ class TestRenameInvoiceConversion:
         # Old wording that flipped billed invoices to Receipt
         assert 'page says payment received → Receipt' not in hint
 
-    def test_build_extraction_prompt_grounds_insurance_policy_line(self):
-        """Insurance titles copy the labeled POLICY line; do not seed Auto/Property.
+    def test_build_extraction_prompt_leaves_policy_lines_to_code(self):
+        """Policy coverage is read from the labeled line, not taught in the prompt.
 
-        Travelers WC bills list Workers Compensation on page 2. The old prompt
-        example 'Auto Property Insurance' plus Travelers' auto-insurer brand
-        produced Travelers Auto Property Insurance 4070 … instead of
-        Travelers Workers Compensation 4070 ….
+        Travelers WC bills list Workers Compensation on page 2. Prompt examples
+        like 'Auto Property Insurance' made the model guess Auto from the brand.
         """
         from invoice_renamer import _build_extraction_prompt, INVOICE_EXTRACTION_PROMPT
 
         base = _build_extraction_prompt(None)
         assert base == INVOICE_EXTRACTION_PROMPT
-        assert 'Workers Compensation' in base
-        assert 'POLICY' in base
-        assert 'NJ Auto 7101' in base
-        assert 'ending in' in base
-        assert 'insurer brand' in base
-        assert 'United Services Automobile Association' in base
-        assert 'guessed bundle' in base
-        # Prompt-primed coverage types that caused the Travelers miss
+        assert 'Do NOT invent a filename' in base
+        assert 'labeled lines' in base
+        assert 'Workers Compensation' not in base
+        assert 'NJ Auto 7101' not in base
+        assert 'ending in' not in base
+        assert 'United Services Automobile Association' not in base
         assert 'Auto Property Insurance' not in base
         assert 'Auto Policy' not in base
 

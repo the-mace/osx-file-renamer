@@ -13,6 +13,7 @@ import shutil
 import glob
 import tempfile
 import PIL.Image
+import document_families
 try:
     from titlecase import titlecase  # type: ignore[import-untyped]
 except ImportError:
@@ -29,9 +30,6 @@ except ImportError:
 
 PDF_CONVERSION_TIMEOUT = 60
 PDF_TEXT_TIMEOUT = 15
-# pdftotext -layout: account digits sit under the "Account Number" header.
-# Routing number is a different column (~30+ chars away); keep the slack tight.
-_ACCOUNT_LABEL_COLUMN_SLACK = 8
 CONVERTIBLE_IMAGE_EXTENSIONS = ['.heic', '.jpg', '.jpeg', '.png', '.webp', '.tiff', '.tif', '.bmp', '.gif']
 CONVERTIBLE_DOC_EXTENSIONS = ['.docx']
 CONVERTIBLE_EXTENSIONS = CONVERTIBLE_IMAGE_EXTENSIONS + CONVERTIBLE_DOC_EXTENSIONS
@@ -39,9 +37,10 @@ CONVERTIBLE_EXTENSIONS = CONVERTIBLE_IMAGE_EXTENSIONS + CONVERTIBLE_DOC_EXTENSIO
 # ---------------------------------------------------------------------------
 # Naming contract
 #
-# LLM extracts FACTS only. Python owns the filename grammar (see
-# _select_display_topic / _build_filename_parts). Do not teach assembly rules
-# in the prompt beyond "return these fields."
+# The model returns facts. document_families reads labeled lines on text PDFs
+# and those facts win. Python owns the filename grammar (see
+# _select_display_topic / _build_filename_parts). Do not teach label priority
+# or assembly rules in the prompt.
 #
 # Grammar:
 #   Vendor [AccountType] Topic [AccountId] [- Party] [RefId] Date.ext
@@ -55,11 +54,14 @@ CONVERTIBLE_EXTENSIONS = CONVERTIBLE_IMAGE_EXTENSIONS + CONVERTIBLE_DOC_EXTENSIO
 # document_title JSON key = optional short QUALIFIER (premise, subtype, form name).
 # ---------------------------------------------------------------------------
 
-# Fact-extraction prompt — keep short; assembly policy lives in code.
+# Fact-extraction prompt. Label priority and filename assembly live in code.
 INVOICE_EXTRACTION_PROMPT = """Extract facts from this document as JSON. Do NOT invent a filename — code builds it from these fields.
 Priority facts: short Vendor, Type, short Account id, Date. Keep values SHORT and recognizable.
 Ground every field in text you can actually see. If a field is unreadable or absent, use null (or
 "Unknown" only for business_name) — never guess a common chain, brand, or date that is not on the page.
+
+Code reads labeled lines on text PDFs (policy, account number, statement date, service location)
+and overwrites those fields. Still return your best read. Do not invent a value that is not printed.
 
 1. business_name — short brand of the ISSUER/vendor, not legal entity (max ~3–4 words):
    Amex not American Express; BofA not Bank of America; Chase not JPMorgan Chase Bank N.A.
@@ -79,26 +81,16 @@ Ground every field in text you can actually see. If a field is unreadable or abs
    Form | Contract | Policy | Certificate | Permit | Map | Itinerary | Test
    - Statement if "statement" is prominent (not Report)
    - Brokerage / IRA / investment / portfolio / crypto account period summaries → Statement
-     (not Report, not document_title "Investment"). Product names like "Investment Report"
-     or "Account Summary" for a dated account statement are still Statement.
-   - Confirmation for trade/order/booking confirmations (not Receipt)
+   - Confirmation for trade/order/booking confirmations (not Receipt). Subtype goes in
+     document_title: Trade, Order, Booking, Reservation.
    - Invoice when the page is a bill (Invoice/Bill heading, Invoice #, Due Date, amount due,
      remittance stub, or new charges) — even if it lists a payment received or "auto pay receipt"
    - Receipt only for standalone proof of payment (no amount due / no new charges)
    - Quote for estimates/proposals not yet requesting payment
-   - Report only if the document explicitly says report AND is not a bank/brokerage statement
-   - "JOB INVOICE" / "Job Invoice" form title → Invoice (document_title null, not "Job")
    - Never put account categories (Investment, IRA, Portfolio, Checking, …) in document_type
 
 3. invoice_date — YYYY-MM-DD when visible (check content pages, not only cover).
-   Receipts: transaction date. Invoices: invoice/bill date.
-   Statements (priority order):
-     1) Labeled Statement Date / Closing Date / Bill Date when present
-        (e.g. "Statement Date: 08/05/2026", "Closing Date 08/28/26")
-     2) Else period END of a billing range — never the period start
-        ("01 Jul 2026 - 31 Jul 2026" or "7/1/26 - 7/31/26" → 2026-07-31)
-     Do not use Due Date, payment dates, or rewards/points "as of" snapshots.
-   Notices/forms: header date or tax/form year. Always extract if visible.
+   Receipts: transaction date. Invoices: invoice/bill date. Do not use Due Date.
    Handwritten M/D/YY near the DATE label: two-digit year → 20YY (e.g. 7/1/26 → 2026-07-01).
 
 4. invoice_number — short doc ref only (Invoice #, Bill #, Case #, Permit #). null if none.
@@ -106,48 +98,28 @@ Ground every field in text you can actually see. If a field is unreadable or abs
 
 5. patient_animal_name — proper name of the medical patient / vet pet / horse; else null.
    If several named animals appear, return a JSON array of their proper names — never just the first.
-   Generic species/role labels are not names (Horse, Patient, Pet, Dog, Cat, "Horse (mason)").
+   Generic species/role labels are not names (Horse, Patient, Pet, Dog, Cat).
    patient_count — on vet/medical docs, number of distinct patients/animals with their own
-   charges or line-item groups (count generic "Horse" groups too). Else null. Always set
-   patient_count on vet/medical documents even if you also filled a name.
+   charges or line-item groups. Else null. Always set patient_count on vet/medical documents
+   even if you also filled a name.
 
 6. account_type — specific category when known, else null:
    Checking, Savings, Money Market, CD, IRA, Investment, Credit Card (or Platinum/Gold if labeled as tier),
    Annuity, VUL, Life Insurance, Brokerage, 401k.
    Multi-account overview (2+ different account numbers) → "Portfolio".
-   "Business Investment Account" / "Investment Account" → Investment (not Checking, not null).
    null only for a fully generic unlabeled "Account".
 
 7. account_last_4 — last 4 digits or short alphanumeric id for a SINGLE account/card
    (also utility/telecom service accounts even when account_type is null).
-   Hyphenated brokerage AAA-BBBBB-C-D (e.g. 609-92865-1-7) → last 4 of the 5-digit body
-   (2865), not the check-digit tail and not body+check (8651).
-   Portfolio overview: last-4 of the PRIMARY / first listed account when visible; else null.
    Never full account numbers.
 
 8. document_title — optional SHORT qualifier (not a full filename). Use when it adds meaning beyond type:
    - Confirmation subtype: Trade, Order, Booking, Reservation
-   - Utility/telecom multi-service PREMISE label only when the document itself labels a
-     service location (meter site, service address name, premise id) — NOT the customer
-     mailing address. Examples: service location "BARN" → "Barn"; meter/site "COGEN" →
-     "Cogen"; "Apt 2B" / Unit B / Garage when that is the billed premise.
-     null for bank, credit card, brokerage, toll/E-ZPass, transit, and any statement that
-     only shows a street mailing address with no separate service-location label.
-     Never invent Barn/Cogen/Garage/etc. from a street line alone.
+   - Utility/telecom service-location label when the document labels one (Barn, Cogen, Apt 2B)
    - Non-routine subject: Tax Delinquent, W-2, Lease, EOB, Building Permit
-   - Insurance: copy the labeled POLICY / coverage line (often page 2), e.g.
-     Workers Compensation, Homeowners. "NJ Auto 7101" under Policy Being Billed
-     is Auto, and 7101 is account_last_4. Do not invent Auto, Property, or
-     Liability from the insurer brand (United Services Automobile Association
-     is the company, not the policy). A single labeled policy is that type —
-     not a guessed bundle. A bank or card account "ending in ####" that will
-     be debited is the payment account, not account_last_4.
-   - Multi-item summary: only when 2+ distinct product lines are labeled on the document
    null when Vendor + type is enough (routine invoice, receipt, itinerary, plain bank/CC/toll statement).
    Do not restate the type ("Invoice Document", "Travel Itinerary" → null). Max 5 words, title case.
-   Do not repeat vendor words. Do not invent a premise label that is not on the document.
-   Never use account categories as document_title (Investment, IRA, Portfolio, Checking,
-   Brokerage, Crypto, …) — put those only in account_type.
+   Do not repeat vendor words. Never use account categories as document_title.
 
 9. USDF dressage scorecards only (else all three null). Set document_type to "Test":
    - usdf_test_name: omit the word "Level" — e.g. "USDF Introductory A", "USDF Training 1",
@@ -180,60 +152,23 @@ FILENAME_ABBREVIATIONS = [
     (re.compile(r'^J\.?\s*P\.?\s*Morgan Chase(?: Bank)?(?:,? N\.?A\.?)?$', re.IGNORECASE), 'Chase'),
     (re.compile(r'^Wells Fargo(?: Bank)?$', re.IGNORECASE), 'Wells Fargo'),
     (re.compile(r'^Citibank(?: N\.?A\.?)?$', re.IGNORECASE), 'Citi'),
+    # Same property, two letterhead strings. Parent brand keeps one filename.
+    (re.compile(r'^Sheraton(?: Sand Key(?: Resort)?)?$', re.IGNORECASE), 'Sheraton'),
+    # "Advantage Propane, A Paraco Company" — comma is stripped before this match.
+    (re.compile(r'^Advantage Propane(?: A Paraco(?: Company)?)?$', re.IGNORECASE), 'Paraco'),
     (re.compile(r'^Credit Card$', re.IGNORECASE), 'CC'),
     (re.compile(r'^(?:Business\s+)?Investment(?:\s+Account)?$', re.IGNORECASE), 'Investment'),
     (re.compile(r'^Social Security Administration$', re.IGNORECASE), 'SSA'),
     (re.compile(r'^Internal Revenue Service$', re.IGNORECASE), 'IRS'),
 ]
-MAX_ACCOUNT_ID_LEN = 8  # longer account ids look like full numbers — trim to last 4
+MAX_ACCOUNT_ID_LEN = document_families.MAX_ACCOUNT_ID_LEN
 # Filename ref slot is last-4 only (low PII); longer invoice/doc ids collapse the same way
 REF_ID_DISPLAY_LEN = 4
-# Edward Jones / similar: AAA-BBBBB-C-D — last-4 of the 5-digit body, not the check-digit tail
-_BROKERAGE_HYPHEN_ACCOUNT_RE = re.compile(r'^(?:\d{2,4}-)?(\d{5})-\d(?:-\d)?$')
 # Vendor download masks: XXXX2865, XXXX2865-8, xx-1234
 _FILENAME_MASKED_ACCOUNT_RE = re.compile(r'(?i)\bx{2,}[\s_-]*(\d{4})\b')
 # 4-digit body plus trailing check digit: 2865-8 / 2865 8
 _FILENAME_CHECKDIGIT_ACCOUNT_RE = re.compile(r'(?<!\d)(\d{4})[\s_-]\d\b')
-_FILENAME_YEAR_TOKEN_RE = re.compile(r'^(?:19|20)\d{2}$')
-# "Account Number" / "Account No." / "Account #" — not "Account Notice"
-_ACCOUNT_NUMBER_LABEL_RE = re.compile(
-    r'(?i)\baccount\s*(?:number\b|no\.?\b|#)'
-)
-# Labeled insurance product lines. Longest phrases first so
-# "Workers Compensation" is not shortened to a later token.
-_POLICY_COVERAGE_PHRASES = (
-    ("workers' compensation", 'Workers Compensation'),
-    ("worker's compensation", 'Workers Compensation'),
-    ('workers compensation', 'Workers Compensation'),
-    ('commercial auto', 'Commercial Auto'),
-    ('personal automobile', 'Auto'),
-    ('personal auto', 'Auto'),
-    ('homeowners', 'Homeowners'),
-    ('homeowner', 'Homeowners'),
-    ("renter's", 'Renters'),
-    ('renters', 'Renters'),
-    ('condominium', 'Condo'),
-    ('inland marine', 'Inland Marine'),
-    ('motorcycle', 'Motorcycle'),
-    ('umbrella', 'Umbrella'),
-    ('automobile', 'Auto'),
-    ('dwelling', 'Dwelling'),
-    ('flood', 'Flood'),
-    ('condo', 'Condo'),
-    ('boat', 'Boat'),
-    ('auto', 'Auto'),
-    ('life', 'Life'),
-)
-# "Policy Being Billed" / "Policy Type" / "POLICY" — not the word "policies"
-_POLICY_LABEL_RE = re.compile(
-    r'(?i)\b(?:policy(?!ies\b)(?:\s+being\s+billed|\s+type|\s+name)?|line\s+of\s+business)\b'
-)
-# Draft account on an insurance bill: "bank account ending in 0529"
-_PAYMENT_ACCOUNT_ENDING_RE = re.compile(
-    r'(?i)\b(?:bank|checking|savings|debit|payment)\s+account\s+ending\s+in\s+(\d{4})\b'
-)
-# How many following content lines to search after a policy label
-_POLICY_LOOKAHEAD_LINES = 4
+_FILENAME_YEAR_TOKEN_RE = document_families.YEAR_TOKEN_RE
 
 # Original filenames that are camera/scanner defaults or bare numbers carry no useful signal
 GENERIC_FILENAME_PATTERNS = [
@@ -761,68 +696,6 @@ For notices/letters: Look for the date at the top of the document.
 Return ONLY the date in YYYY-MM-DD format. If you see a date like "11/3/25", interpret it as MM/DD/YY and convert to YYYY-MM-DD (e.g., "2025-11-03").
 If no date is visible, return "NONE"."""
 
-# Labeled statement dates beat billing-period ranges (Tesla SolarPPA, Amex, etc.).
-# Stronger labels win when several appear. Bare "as of" only at line start so
-# "Reward Dollars as of 07/28/2026" is not treated as the statement date.
-_LABELED_STATEMENT_DATE_RE = re.compile(
-    r'(?P<label>'
-    r'statement\s*(?:closing\s*)?date'
-    r'|closing\s*date'
-    r'|bill\s*date'
-    r'|as\s*of\s*date'
-    r'|(?:^|\n)\s*as\s*of'
-    r')\s*[:\-]?\s*'
-    r'(?P<date>'
-    r'\d{1,2}/\d{1,2}/\d{2,4}'
-    r'|\d{4}-\d{2}-\d{2}'
-    r'|[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}'
-    r'|\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4}'
-    r')',
-    re.IGNORECASE | re.MULTILINE,
-)
-_LABELED_STATEMENT_DATE_RANK = {
-    'statement date': 1,
-    'statement closing date': 1,
-    'closing date': 1,
-    'bill date': 2,
-    'as of date': 3,
-    'as of': 4,
-}
-
-# Statement period ranges near the header (Fidelity, banks). End date is the fallback filename date.
-_PERIOD_RANGE_RES = (
-    # 01 Jul 2026 - 31 Jul 2026  |  1 July 2026 to 31 July 2026
-    re.compile(
-        r'(?P<start>\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})\s*(?:[-–—]|to)\s*'
-        r'(?P<end>\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})',
-        re.IGNORECASE,
-    ),
-    # July 1, 2026 - July 31, 2026  |  Jul 1 2026 – Jul 31 2026
-    re.compile(
-        r'(?P<start>[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})\s*(?:[-–—]|to)\s*'
-        r'(?P<end>[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4})',
-        re.IGNORECASE,
-    ),
-    # 7/1/2026 - 7/31/2026  |  07/01/26 – 07/31/26
-    re.compile(
-        r'(?P<start>\d{1,2}/\d{1,2}/\d{2,4})\s*(?:[-–—]|to)\s*'
-        r'(?P<end>\d{1,2}/\d{1,2}/\d{2,4})',
-    ),
-    # 2026-07-01 - 2026-07-31
-    re.compile(
-        r'(?P<start>\d{4}-\d{2}-\d{2})\s*(?:[-–—]|to)\s*'
-        r'(?P<end>\d{4}-\d{2}-\d{2})',
-    ),
-)
-_PERIOD_DATE_FORMATS = (
-    "%Y-%m-%d",
-    "%m/%d/%Y", "%m/%d/%y",
-    "%d/%m/%Y", "%d/%m/%y",
-    "%B %d, %Y", "%b %d, %Y",
-    "%B %d %Y", "%b %d %Y",
-    "%d %B %Y", "%d %b %Y",
-)
-
 
 USDF_PAGE2_PROMPT = """This image is the front cover of a USDF/USEF dressage test booklet. Extract:
 - Test name (e.g. "2023 USDF INTRODUCTORY LEVEL – TEST A") — abbreviate to omit "Level":
@@ -1235,73 +1108,19 @@ def _find_pdftotext():
         return None
 
 
-def _parse_loose_date_token(token):
-    """Parse a single date token from a period range into YYYY-MM-DD, or None."""
-    if not token:
-        return None
-    cleaned = re.sub(r'\s+', ' ', str(token).strip())
-    for fmt in _PERIOD_DATE_FORMATS:
-        try:
-            return datetime.strptime(cleaned, fmt).strftime("%Y-%m-%d")
-        except ValueError:
-            continue
-    return None
-
-
-def _statement_date_label_rank(label):
-    """Lower rank wins when several labeled dates are present."""
-    key = re.sub(r'\s+', ' ', (label or '').strip().lower())
-    return _LABELED_STATEMENT_DATE_RANK.get(key, 99)
-
-
 def _parse_labeled_statement_date(text):
-    """Return labeled Statement/Closing/Bill/As-of Date as YYYY-MM-DD, or None.
-
-    Explicit labels beat billing-period ranges. Closing Date / Statement Date
-    beat incidental rewards "as of" snapshots. Does not match Due Date.
-    """
-    if not text:
-        return None
-    head = text[:2500]
-    best = None  # (rank, position, date)
-    for match in _LABELED_STATEMENT_DATE_RE.finditer(head):
-        parsed = _parse_loose_date_token(match.group('date'))
-        if not parsed:
-            continue
-        candidate = (_statement_date_label_rank(match.group('label')), match.start(), parsed)
-        if best is None or candidate[:2] < best[:2]:
-            best = candidate
-    return best[2] if best else None
+    """Labeled Statement/Closing/Bill Date as YYYY-MM-DD, or None. See document_families."""
+    return document_families.parse_labeled_statement_date(text)
 
 
 def _parse_statement_period_range(text):
-    """Return (start, end) as YYYY-MM-DD from a header period range, or (None, None).
-
-    Models often return the range start (e.g. 2026-07-01 for "01 Jul 2026 - 31 Jul 2026").
-    When no labeled Statement Date exists, filenames should use the period end.
-    """
-    if not text:
-        return None, None
-    # Header area only — avoid incidental ranges deeper in the document
-    head = text[:2500]
-    for pattern in _PERIOD_RANGE_RES:
-        match = pattern.search(head)
-        if not match:
-            continue
-        start = _parse_loose_date_token(match.group('start'))
-        end = _parse_loose_date_token(match.group('end'))
-        if not end:
-            continue
-        if start and end < start:
-            continue
-        return start, end
-    return None, None
+    """(start, end) of a header billing range, or (None, None). See document_families."""
+    return document_families.parse_statement_period_range(text)
 
 
 def _parse_statement_period_end(text):
-    """Return statement period END as YYYY-MM-DD from header range text, or None."""
-    _, end = _parse_statement_period_range(text)
-    return end
+    """Statement period END as YYYY-MM-DD, or None. See document_families."""
+    return document_families.parse_statement_period_end(text)
 
 
 def _pdf_text(file_path, first_page=1, last_page=None):
@@ -1341,329 +1160,199 @@ def _pdf_text_head(file_path, max_pages=1):
     return _pdf_text(file_path, first_page=1, last_page=max_pages)
 
 
-def _digit_run_at_column(line, column, slack=_ACCOUNT_LABEL_COLUMN_SLACK):
-    """Return the 4+ digit run whose start is closest to column, or None."""
-    best = None
-    best_dist = None
-    for match in re.finditer(r'\d{4,}', line):
-        dist = abs(match.start() - column)
-        if best is None or dist < best_dist:
-            best = match.group(0)
-            best_dist = dist
-    if best is None or best_dist > slack:
-        return None
-    return best
+def _pdf_texts_for_families(file_path):
+    """(full document text, first-page text) for family extractors, or (None, None).
+
+    Statement dates use the first page so a later range cannot override the header.
+    Account numbers and policy lines may sit past the pages the model saw.
+    """
+    if not file_path or not str(file_path).lower().endswith('.pdf'):
+        return None, None
+    full_text = _pdf_text(file_path)
+    if not full_text:
+        return None, None
+    return full_text, _pdf_text_head(file_path)
 
 
 def _parse_labeled_account_number(text):
-    """Digit string of a labeled Account Number in PDF text, or None.
-
-    X Money prints a footer table after the dispute notice:
-
-        Routing Number                        Account Number                         Issuing Bank
-        021214891                             363240448011                           Cross River Bank
-
-    Digits line up under the Account Number header. The routing number, in a
-    different column, is ignored. Inline "Account Number: 363240448011" works too.
-    """
-    if not text:
-        return None
-    lines = text.splitlines()
-    for index, line in enumerate(lines):
-        match = _ACCOUNT_NUMBER_LABEL_RE.search(line)
-        if not match:
-            continue
-        # Same line, after the label: "Account Number: 363240448011"
-        inline = re.search(r'\d{4,}', line[match.end():])
-        if inline:
-            if _normalize_account_id(inline.group(0)):
-                return inline.group(0)
-            continue
-        # Column header: value on the next content line, under the label.
-        label_col = match.start()
-        for follow in lines[index + 1:index + 4]:
-            if not follow.strip():
-                continue
-            chosen = _digit_run_at_column(follow, label_col)
-            if chosen and _normalize_account_id(chosen):
-                return chosen
-            break
-    return None
+    """Digit string of a labeled Account Number, or None. See document_families."""
+    return document_families.parse_labeled_account_number(text)
 
 
 def _parse_labeled_account_last4(text):
-    """Last 4 of a labeled Account Number in PDF text, or None."""
-    return _normalize_account_id(_parse_labeled_account_number(text))
-
-
-def _is_padded_account_tail(model_value, full_digits):
-    """True when the model zero-padded a short tail of the real account number.
-
-    X Money account 363240448011 was returned as "011" and then "0011".
-    A real last-4 that merely starts with 0 (Fidelity 0961) is not a pad
-    of a different account.
-    """
-    raw = re.sub(r'\D', '', str(model_value or ''))
-    if not raw or not full_digits:
-        return False
-    if len(raw) >= 4 and full_digits.endswith(raw) and raw == full_digits[-4:]:
-        return False
-    stripped = raw.lstrip('0')
-    if not stripped or len(stripped) >= 4 or len(stripped) < 2:
-        return False
-    return full_digits.endswith(stripped)
+    """Last 4 of a labeled Account Number, or None. See document_families."""
+    return document_families.parse_labeled_account_last4(text)
 
 
 def _parse_policy_product_line(line):
-    """Return (coverage, policy_id or None) for one labeled policy product line.
-
-    "NJ Auto 7101" → ("Auto", "7101"). "Workers Compensation" → ("Workers Compensation", None).
-    Letterhead such as "United Services Automobile Association" does not match.
-    A trailing vehicle year (Auto 2023) is not a policy id.
-    """
-    text = re.sub(r'\s+', ' ', (line or '').strip())
-    if not text or len(text) > 80:
-        return None
-    stripped = re.sub(
-        r'(?i)^(?:policy(?!ies\b)(?:\s+being\s+billed|\s+type|\s+name)?'
-        r'|line\s+of\s+business|coverage)\s*[:\-]?\s+',
-        '',
-        text,
-    )
-    if stripped != text:
-        text = stripped.strip()
-    if not text or re.search(r'[$]|/\d', text):
-        return None
-    for phrase, display in _POLICY_COVERAGE_PHRASES:
-        match = re.fullmatch(
-            rf'(?:[A-Z]{{2}}\s+)?{re.escape(phrase)}(?:\s+(?P<pid>[A-Za-z0-9-]{{3,12}}))?',
-            text,
-            flags=re.IGNORECASE,
-        )
-        if not match:
-            continue
-        pid = match.group('pid')
-        if pid and (_FILENAME_YEAR_TOKEN_RE.match(pid) or not re.search(r'\d', pid)):
-            pid = None
-        if pid:
-            pid = _normalize_account_id(pid)
-        return display, pid
-    return None
+    """(coverage, policy_id or None) for one policy product line. See document_families."""
+    return document_families.parse_policy_product_line(line)
 
 
 def _parse_labeled_policies(text):
-    """Unique (coverage, policy_id) pairs from lines next to a policy label."""
-    if not text:
-        return []
-    lines = text.splitlines()
-    found = []
-    seen = set()
-    for index, line in enumerate(lines):
-        if not _POLICY_LABEL_RE.search(line):
-            continue
-        candidates = [line]
-        checked = 0
-        for follow in lines[index + 1:index + 1 + 8]:
-            if not follow.strip():
-                continue
-            candidates.append(follow)
-            checked += 1
-            if checked >= _POLICY_LOOKAHEAD_LINES:
-                break
-        for candidate in candidates:
-            parsed = _parse_policy_product_line(candidate)
-            if not parsed:
-                continue
-            if parsed not in seen:
-                seen.add(parsed)
-                found.append(parsed)
-            break
-    return found
+    """(coverage, policy_id) pairs next to a policy label. See document_families."""
+    return document_families.parse_labeled_policies(text)
 
 
 def _payment_account_last4(text):
     """Last 4 of a bank/card account that will be debited, or None."""
-    if not text:
-        return None
-    match = _PAYMENT_ACCOUNT_ENDING_RE.search(text)
-    if not match:
-        return None
-    return match.group(1)
+    return document_families.payment_account_last4(text)
 
 
-def _title_names_coverage(title, coverage):
-    """True when title already contains the coverage as a whole word."""
-    if not title or not coverage:
-        return False
-    return re.search(rf'(?i)\b{re.escape(coverage)}\b', str(title)) is not None
+def _fill_insurance_policy_from_pdf(info, file_path, text=None):
+    """Fill policy qualifier and id from the labeled policy line."""
+    if text is None:
+        text = _pdf_text(file_path)
+    document_families.apply_insurance_policy(info, text)
 
 
-def _fill_insurance_policy_from_pdf(info, file_path):
-    """Fill a missing policy qualifier and id from the labeled policy line.
-
-    USAA insurance bills are headed INSURANCE BILL and list "NJ Auto 7101"
-    under Policy Being Billed. The model often returns Statement with no title
-    because the page also says Statement Date, and it copies the draft account
-    ("bank account ending in 0529") instead of the policy id. The insurer's
-    legal name (United Services Automobile Association) is not a policy line.
-
-    One labeled coverage becomes the topic, including when the model returned
-    a longer form ("NJ Auto") or also put that coverage in account_type
-    ("Auto" + "NJ Auto" → Auto, not "Auto NJ Auto"). Two or more distinct
-    coverages are left for the model. A single policy-line id replaces
-    whatever the model returned (member number, draft account, or nothing).
-    A payment-account last-4 is dropped when the policy line has no id.
-    """
-    logger = logging.getLogger(__name__)
-    if not info or not file_path:
-        return
-    text = _pdf_text(file_path)
-    policies = _parse_labeled_policies(text)
-    if not policies:
-        return
-
-    coverages = []
-    for coverage, _pid in policies:
-        if coverage not in coverages:
-            coverages.append(coverage)
-    ids = []
-    for _coverage, pid in policies:
-        if pid and pid not in ids:
-            ids.append(pid)
-    policy_id = ids[0] if len(coverages) == 1 and len(ids) == 1 else None
-    payment = _payment_account_last4(text)
-
-    if len(coverages) == 1:
-        coverage = coverages[0]
-        current = _raw_qualifier(info)
-        if (current or '').strip().lower() != coverage.lower():
-            logger.info(
-                f"Filled document_title {coverage!r} from labeled policy line "
-                f"(was {current!r})"
-            )
-            info['document_title'] = coverage
-            if 'qualifier' in info:
-                info['qualifier'] = coverage
-        account_type = info.get('account_type')
-        if _title_names_coverage(account_type, coverage):
-            logger.info(
-                f"Dropped account_type {account_type!r} (restates policy coverage)"
-            )
-            info['account_type'] = None
-    else:
-        logger.info(
-            f"Multiple labeled policies {coverages!r}; leaving document_title unchanged"
-        )
-
-    current_id = _normalize_account_id(info.get('account_last_4'))
-    if policy_id and current_id != policy_id:
-        previous = info.get('account_last_4')
-        info['account_last_4'] = policy_id
-        logger.info(
-            f"Using policy id {policy_id} from labeled policy line (was {previous!r})"
-        )
-        return
-    if payment and current_id == payment:
-        logger.info(
-            f"Dropped payment-account last-4 {current_id} "
-            "(bank account being debited, not the policy)"
-        )
-        info['account_last_4'] = None
-
-
-def _fill_account_last4_from_pdf(info, file_path):
+def _fill_account_last4_from_pdf(info, file_path, text=None):
     """Fill a missing or zero-padded account id from a labeled Account Number.
 
-    Runs when the model omitted account_last_4, returned fewer than 4 digits,
-    or zero-padded a short tail ("0011" from 363240448011 → 8011). A last-4
-    that does not start with 0 is left alone. Receipts are skipped.
+    Does not read the PDF when the model already returned a usable last-4
+    that does not start with 0, or when the document is not an account type.
     """
-    logger = logging.getLogger(__name__)
+    if text is None:
+        if not document_families.account_last4_should_read(info):
+            return
+        text = _pdf_text(file_path)
+    document_families.apply_account_last4(info, text)
+
+
+def _prefer_statement_date_from_pdf(info, file_path, text=None):
+    """Prefer labeled Statement/Closing Date, else correct a period-start pick."""
     if not info or not file_path:
         return
-    current_norm = _normalize_account_id(info.get('account_last_4'))
-    if current_norm and not str(current_norm).startswith('0'):
-        return
+    if text is None:
+        text = _pdf_text_head(file_path)
+    document_families.apply_statement_date(info, text, _is_account_category_label)
+
+
+def _apply_portal_invoice_family(info):
+    """Drop invoice-id fragments the model copied into the title."""
+    before = _raw_qualifier(info)
+    _strip_opaque_qualifier_tokens(info)
+    return _raw_qualifier(info) != before
+
+
+def _apply_receipt_family(info, full_text):
+    """Standalone receipts are Receipt. A bill that mentions a receipt stays a bill."""
+    if not document_families.is_standalone_receipt(full_text):
+        return False
+    if document_families.parse_labeled_policies(full_text):
+        return False
     dtype = str(info.get('document_type') or '').strip().lower()
-    account_detail_types = {
-        'statement', 'report', 'notice', 'letter', 'policy', 'contract',
-        'invoice', 'confirmation',
-    }
-    if dtype not in account_detail_types and not info.get('account_type'):
-        return
-    text = _pdf_text(file_path)
-    full_digits = _parse_labeled_account_number(text)
-    last4 = _normalize_account_id(full_digits)
-    if not last4 or last4 == current_norm:
-        return
-    if current_norm and not _is_padded_account_tail(info.get('account_last_4'), full_digits):
-        return
-    previous = info.get('account_last_4')
-    info['account_last_4'] = last4
-    if previous:
-        logger.info(
-            f"Replaced short account_last_4 {previous!r} with {last4} "
-            "from PDF account-number label"
-        )
-    else:
-        logger.info(f"Filled account_last_4 {last4} from PDF account-number label")
+    if dtype not in ('', 'invoice', 'document'):
+        return False
+    info['document_type'] = 'Receipt'
+    logging.getLogger(__name__).info("Document family receipt: type → Receipt")
+    return True
 
 
-def _prefer_statement_date_from_pdf(info, file_path):
-    """Refine statement invoice_date from PDF header text.
-
-    Priority:
-      1) Labeled Statement Date / Closing Date / Bill Date (Tesla, Amex, etc.)
-      2) Period END — only when missing, or when the model used the period start
-         (Fidelity "01 Jul 2026 - 31 Jul 2026" → 2026-07-31)
-
-    Never override a non-start date with period end when a usage/billing range is
-    present alongside a later Statement Date. Do not treat rewards "as of"
-    snapshots as the statement date.
-    """
-    logger = logging.getLogger(__name__)
-    if not info or not file_path:
-        return
-    dtype = str(info.get('document_type') or '').strip().lower()
+def _apply_utility_family(info, full_text):
+    """A labeled service location becomes the topic when it is a premise name."""
+    if _raw_qualifier(info):
+        return False
+    if _vendor_blocks_premise_label(info.get('business_name')):
+        return False
     account_type = info.get('account_type')
-    is_financial_statement = (
-        dtype in ('statement', 'report')
-        or _is_account_category_label(dtype)
-        or (account_type and _is_account_category_label(account_type))
-    )
-    if not is_financial_statement:
-        return
+    if account_type and str(account_type).strip().lower() in _BANK_STYLE_ACCOUNT_TYPES:
+        return False
+    label = document_families.service_location_label(full_text)
+    if not label or not _is_premise_style_qualifier(label):
+        return False
+    info['document_title'] = label
+    logging.getLogger(__name__).info(f"Document family utility: service location {label!r}")
+    return True
 
-    text = _pdf_text_head(file_path)
-    if not text:
-        return
 
-    current = info.get('invoice_date')
-    labeled = _parse_labeled_statement_date(text)
-    if labeled:
-        if current != labeled:
-            logger.info(
-                f"Preferring labeled statement date {labeled} over extracted date {current!r}"
-            )
-            info['invoice_date'] = labeled
-        return
-
-    period_start, period_end = _parse_statement_period_range(text)
-    if not period_end:
-        return
-
-    # Missing date → use period end
-    if not current:
-        logger.info(f"Using statement period end {period_end} (no date extracted)")
-        info['invoice_date'] = period_end
-        return
-
-    # Model used period start → correct to end (crypto Fidelity case)
-    if period_start and current == period_start and current != period_end:
-        logger.info(
-            f"Preferring statement period end {period_end} over period start {current!r}"
+def _apply_vet_family(info, full_text):
+    """Labeled patient lines set the party. Two or more names omit the party later."""
+    names = document_families.labeled_patient_names(full_text)
+    if len(names) >= 2:
+        info['patient_count'] = len(names)
+        info['patient_animal_name'] = names
+        logging.getLogger(__name__).info(
+            f"Document family vet: {len(names)} patients {names!r}"
         )
-        info['invoice_date'] = period_end
+        return True
+    if len(names) == 1 and not info.get('patient_animal_name'):
+        info['patient_animal_name'] = names[0]
+        if _patient_count_value(info) is None:
+            info['patient_count'] = 1
+        logging.getLogger(__name__).info(f"Document family vet: patient {names[0]!r}")
+        return True
+    return False
+
+
+def _run_portal_family(info, full_text, head_text):
+    del full_text, head_text
+    return _apply_portal_invoice_family(info)
+
+
+def _run_insurance_family(info, full_text, head_text):
+    del head_text
+    return bool(full_text) and document_families.apply_insurance_policy(info, full_text)
+
+
+def _run_receipt_family(info, full_text, head_text):
+    del head_text
+    return bool(full_text) and _apply_receipt_family(info, full_text)
+
+
+def _run_statement_family(info, full_text, head_text):
+    statement_text = head_text if head_text is not None else full_text
+    return bool(statement_text) and document_families.apply_statement_date(
+        info, statement_text, _is_account_category_label
+    )
+
+
+def _run_account_family(info, full_text, head_text):
+    del head_text
+    return bool(full_text) and document_families.apply_account_last4(info, full_text)
+
+
+def _run_utility_family(info, full_text, head_text):
+    del head_text
+    return bool(full_text) and _apply_utility_family(info, full_text)
+
+
+def _run_vet_family(info, full_text, head_text):
+    del head_text
+    return bool(full_text) and _apply_vet_family(info, full_text)
+
+
+# Earlier families win on a field they set. Portal clears junk titles first.
+_DOCUMENT_FAMILIES = (
+    ('portal_invoice', _run_portal_family),
+    ('insurance', _run_insurance_family),
+    ('receipt', _run_receipt_family),
+    ('brokerage_statement', _run_statement_family),
+    ('account_number', _run_account_family),
+    ('utility', _run_utility_family),
+    ('vet', _run_vet_family),
+)
+
+
+def apply_document_families(info, full_text=None, head_text=None, filename_hint=None):
+    """Run family extractors. Labeled facts overwrite the model.
+
+    filename_hint is the cleaned original name. Portal and hash basenames are
+    already dropped before they become a hint; the portal family still strips
+    opaque tokens the model copied into document_title. Photos have no text,
+    so every text family no-ops and the vision model still names them.
+    """
+    del filename_hint
+    if not info:
+        return []
+    logger = logging.getLogger(__name__)
+    applied = []
+    for name, runner in _DOCUMENT_FAMILIES:
+        if runner(info, full_text, head_text):
+            applied.append(name)
+    if applied:
+        logger.info(f"Labeled families applied: {', '.join(applied)}")
+    return applied
 
 
 def _extract_usdf_page2_rotated(pdf_path):
@@ -1755,14 +1444,15 @@ def extract_invoice_info(file_path, all_pages=False, filename_hint=None):
             parsed_info['invoice_date'] = current_date
             logger.info(f"No date detected, using current date as fallback: {current_date}")
 
-    # Statements: labeled Statement/Closing Date beats period range; else fix period-start picks.
-    _prefer_statement_date_from_pdf(parsed_info, file_path)
-
-    # Insurance: labeled policy line (NJ Auto 7101) beats a null title and a draft-account last-4.
-    _fill_insurance_policy_from_pdf(parsed_info, file_path)
-
-    # Account number may sit in a footer past the pages the model saw.
-    _fill_account_last4_from_pdf(parsed_info, file_path)
+    # Labeled lines win over the model: policy, statement date, account number,
+    # service location, patients, standalone receipt, portal title junk.
+    full_text, head_text = _pdf_texts_for_families(file_path)
+    apply_document_families(
+        parsed_info,
+        full_text=full_text,
+        head_text=head_text,
+        filename_hint=filename_hint,
+    )
 
     # Validate and log warnings
     _validate_invoice_data(parsed_info)
@@ -1828,34 +1518,10 @@ def clean_filename(text, limit_words=None):
 def _normalize_account_id(value):
     """Normalize account identifier for filenames: short, low-PII, alphanumeric OK.
 
-    - Hyphenated brokerage AAA-BBBBB-C-D (e.g. 609-92865-1-7): last 4 of the 5-digit body
-    - If 4+ digits present (e.g. xxxx1234, xx-1234, full numbers): keep last 4 digits only
-    - Else short alphanumeric refs (e.g. A12B): keep as-is up to MAX_ACCOUNT_ID_LEN
-    - Too short or empty: None
+    Hyphenated brokerage AAA-BBBBB-C-D (609-92865-1-7) keeps the last 4 of the
+    5-digit body (2865). See document_families.account_last4.
     """
-    if not value or value == "null":
-        return None
-    raw = str(value).strip()
-    compact = re.sub(r'\s+', '', raw)
-    hyphenated = _BROKERAGE_HYPHEN_ACCOUNT_RE.fullmatch(compact)
-    if hyphenated:
-        return hyphenated.group(1)[-4:]
-    digits = re.sub(r'[^\d]', '', raw)
-    alnum = re.sub(r'[^A-Za-z0-9]', '', raw)
-    if not alnum:
-        return None
-    # Prefer last 4 digits when enough digits exist (masks / full account numbers)
-    if len(digits) >= 4:
-        return digits[-4:]
-    # Pure digit strings shorter than 4 are not useful as last-4 identifiers
-    if alnum.isdigit():
-        return None
-    # Short alphanumeric account refs without a 4-digit suffix
-    if len(alnum) > MAX_ACCOUNT_ID_LEN:
-        return alnum[-4:]
-    if len(alnum) < 2:
-        return None
-    return alnum
+    return document_families.account_last4(value)
 
 
 def _normalize_invoice_number(value):

@@ -1,0 +1,8 @@
+Berkowitz
+INVOICE
+Invoice Number: 12345
+Due Date: 10/01/2026
+Amount Due: $50.00
+PAYMENTS RECEIVED THIS PERIOD
+AUTO PAY ACCOUNT RECEIPT
+Account Number: 55553353

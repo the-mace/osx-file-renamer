@@ -57,6 +57,8 @@ PDF_EXTRACTION_TIMEOUT = 15
 CONVERSION_TIMEOUT = 60
 COMPRESSION_TIMEOUT = 30
 API_TIMEOUT = 120  # 120 seconds for LLM API calls
+# Extraction is a lookup, not a sample. 0 keeps the same vendor string on similar pages.
+LLM_TEMPERATURE = 0
 MIN_MEANINGFUL_TEXT = 10
 ENV_FILE_PATH = "~/.env"
 # Non-reasoning models are much faster for structured JSON extraction
@@ -773,7 +775,8 @@ def call_llm_api(prompt, model=None, file_path=None, all_pages=False, auto_visio
             model=model,
             messages=messages,
             stream=False,
-            timeout=API_TIMEOUT
+            timeout=API_TIMEOUT,
+            temperature=LLM_TEMPERATURE,
         )
 
         # Extract response text

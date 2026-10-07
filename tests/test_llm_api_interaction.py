@@ -45,6 +45,7 @@ class TestCallLLMApi:
         assert call_kwargs["model"] == "xai/grok-4.20-0309-non-reasoning"
         assert call_kwargs['messages'] == [{"role": "user", "content": "Test prompt"}]
         assert call_kwargs['stream'] is False
+        assert call_kwargs['temperature'] == 0
 
     @patch('llm_client.load_env_file')
     @patch('llm_client.completion')

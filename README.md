@@ -210,7 +210,7 @@ python3 ~/Documents/Code/osx-file-renamer/invoice_renamer.py "$@" --dry-run
 
 ## Naming Convention
 
-The LLM extracts **facts**; Python builds the filename with a fixed grammar:
+The LLM extracts **facts**. On a text PDF, document-family extractors read labeled lines (policy, account number, statement date, service location, patient names) and those values win. Python builds the filename with a fixed grammar. Completions use temperature 0 so the same issuer keeps one vendor string.
 
 ```
 Vendor [AccountType] Topic [AccountId] [- Party] [RefId] Date.ext
