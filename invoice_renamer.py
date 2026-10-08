@@ -183,6 +183,12 @@ _FILENAME_OPAQUE_TOKEN_MIN = 24
 # Max consecutive letters in a real TitleCase word blob (TradeConfirmation = 18).
 # Opaque tokens fragment into short letter runs broken by digits (Wydwcs=6, RTH=3).
 _FILENAME_OPAQUE_MAX_LETTER_RUN = 10
+# Random base64 still produces long letter runs about half the time (wSYlhYebFHNHmai = 15),
+# so the run length alone misses them. Random case rarely yields a lowercase run this long,
+# and digits land in many separate groups; real names (IRS1040Form2025TaxReturn) have few.
+_FILENAME_WORDLIKE_LOWER_RUN_RE = re.compile(r'[a-z]{4,}')
+_FILENAME_OPAQUE_MAX_WORDLIKE_FRACTION = 1 / 3
+_FILENAME_OPAQUE_MIN_DIGIT_GROUPS = 3
 # Pure-hex token (only 0-9a-f) — leftover from splitting hash basenames (dcd, cdfd, cda, dae)
 _FILENAME_PURE_HEX_TOKEN_RE = re.compile(r'^[0-9a-fA-F]+$')
 # Letters outside the hex alphabet indicate real words (Trade, Raven, Tax, …)
@@ -320,6 +326,15 @@ def _max_consecutive_letter_run(text):
     return max_run
 
 
+def _has_random_token_shape(dense):
+    """True when an alnum blob has scattered digit groups and almost no lowercase words."""
+    letters = sum(1 for ch in dense if ch.isalpha())
+    if not letters or len(re.findall(r'\d+', dense)) < _FILENAME_OPAQUE_MIN_DIGIT_GROUPS:
+        return False
+    wordlike = sum(len(run) for run in _FILENAME_WORDLIKE_LOWER_RUN_RE.findall(dense))
+    return wordlike / letters < _FILENAME_OPAQUE_MAX_WORDLIKE_FRACTION
+
+
 def _is_opaque_topic_token(word):
     """True for invoice-id / token fragments that must never become document_title.
 
@@ -376,7 +391,11 @@ def _is_hash_like_basename(raw_name):
         and any(c.isdigit() for c in dense)
         and any(c.isupper() for c in dense)
         and any(c.islower() for c in dense)
-        and _max_consecutive_letter_run(dense) <= _FILENAME_OPAQUE_MAX_LETTER_RUN
+        and (
+            _max_consecutive_letter_run(dense) <= _FILENAME_OPAQUE_MAX_LETTER_RUN
+            or raw_name.endswith('=')
+            or _has_random_token_shape(dense)
+        )
     ):
         return True
     # All-caps hyphenated invoice ids: INV-DF-US-PT0TP1WMURQRB6BZK1
@@ -1309,7 +1328,10 @@ def _run_statement_family(info, full_text, head_text):
 
 def _run_account_family(info, full_text, head_text):
     del head_text
-    return bool(full_text) and document_families.apply_account_last4(info, full_text)
+    if not full_text:
+        return False
+    dropped = document_families.drop_uuid_account_id(info, full_text)
+    return document_families.apply_account_last4(info, full_text) or dropped
 
 
 def _run_utility_family(info, full_text, head_text):

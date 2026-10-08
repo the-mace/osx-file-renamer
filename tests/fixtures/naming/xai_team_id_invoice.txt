@@ -1,0 +1,19 @@
+X.AI LLC
+1450 PAGE MILL ROAD
+PALO ALTO
+
+Invoice                                          EIN: 00-0000000
+
+Bill to
+Jane Q Sample
+jane@example.com
+
+Details                                          Summary for Sep 01, 2026 - Sep 30, 2026
+Team ID ......................... 6510508e-a6f8-496f-b074-2cfcb2375c25    Subtotal in USD ..... $ 0.00
+Invoice reference ................................ LDKN-TM4H-GCEC
+                                                 Total in USD ..... $ 0.00
+Invoice date ..................................... Oct 08, 2026
+
+You will be automatically charged for any amount due.
+
+z6sa4wSYlhYebF_HNHmai9bkYjIe4vNsfr-zu5Uo3Qw=                              Page 1 of 2

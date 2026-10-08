@@ -961,6 +961,55 @@ class TestRenameInvoiceConversion:
         assert not _is_hash_like_basename('TradeConfirmation07312026')
         assert not _is_hash_like_basename('RavenInvoice30928720')
 
+    def test_original_filename_hint_rejects_base64_token_with_long_letter_run(self):
+        """Base64url tokens with a long letter run are still download junk.
+
+        Real-world xAI invoice download:
+          z6sa4wSYlhYebF_HNHmai9bkYjIe4vNsfr-zu5Uo3Qw=.pdf
+        The 15-letter run wSYlhYebF_HNHmai slipped past the run-length gate and
+        produced 'xAI Ylh Yeb Hmai GCEC 20261008.pdf'.
+        """
+        from invoice_renamer import (
+            _original_filename_hint,
+            _is_hash_like_basename,
+            _apply_filename_hint_fallback,
+            _sanitize_document_fields,
+            _clean_and_validate_fields,
+            _build_filename_parts,
+        )
+
+        token = 'z6sa4wSYlhYebF_HNHmai9bkYjIe4vNsfr-zu5Uo3Qw='
+        assert _is_hash_like_basename(token)
+        # Unpadded copies of the same token are caught by shape, not the '=' suffix
+        assert _is_hash_like_basename(token.rstrip('='))
+        assert _original_filename_hint(f'{token}.pdf') is None
+
+        info = {
+            'business_name': 'xAI',
+            'document_type': 'Invoice',
+            'document_title': None,
+            'invoice_date': '2026-10-08',
+            'invoice_number': 'LDKN-TM4H-GCEC',
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        _apply_filename_hint_fallback(info, _original_filename_hint(f'{token}.pdf'))
+        assert info['document_title'] is None
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert filename == 'xAI Invoice GCEC 20261008.pdf'
+
+        # Readable names with digits and acronyms still hint
+        assert not _is_hash_like_basename('TradeConfirmation07312026')
+        assert not _is_hash_like_basename('RavenInvoice30928720')
+        assert not _is_hash_like_basename('IRS1040Form2025TaxReturnCopy')
+        assert not _is_hash_like_basename('XXXX2865-8_2026-edj-statement')
+
     def test_original_filename_hint_rejects_starlink_invoice_id(self):
         """Starlink/Stripe invoice-id download names must not become titles.
 

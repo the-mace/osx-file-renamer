@@ -152,7 +152,8 @@ make lint
    - Party (`patient_animal_name`) is a single named patient/animal; omit when 2+ animals have charges
    - Original filename is a weak signal + code fallback for missing qualifier and account last-4 — not the primary naming brain
    - A labeled Account Number in the PDF text (footer past page 2, or a too-short model fragment) fills last-4. The neighboring routing number is not the account id
-   - Portal invoice-id download names (`INV-DF-US-PT0…`) are not document titles
+   - Portal invoice-id download names (`INV-DF-US-PT0…`) and base64 download tokens are not document titles
+   - A fragment of a UUID (Team ID, tenant id) is not an account id; the invoice reference last-4 is used instead
 
 ### API Configuration
 

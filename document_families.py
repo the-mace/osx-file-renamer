@@ -141,6 +141,11 @@ SERVICE_LOCATION_RE = re.compile(
     r'meter\s+(?:location|site)|service\s+address)\b'
 )
 
+UUID_RE = re.compile(
+    r'(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
+)
+UUID_FRAGMENT_MIN_LEN = 4
+
 PATIENT_LINE_RE = re.compile(
     r'(?i)\b(?:patient|animal|pet|horse)\s*(?:name)?\s*[:#\-]\s*'
     r"([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,2})"
@@ -367,6 +372,31 @@ def is_padded_account_tail(model_value, full_digits):
     if not stripped or len(stripped) >= 4 or len(stripped) < 2:
         return False
     return full_digits.endswith(stripped)
+
+
+def drop_uuid_account_id(info, text):
+    """Clear an account id the model sliced out of a UUID (Team ID, tenant id).
+
+    An id that also appears outside the UUIDs is a real account number and stays.
+    Returns True when the id is cleared.
+    """
+    raw = info.get('account_last_4') if info else None
+    if not raw or not text:
+        return False
+    fragment = re.sub(r'[^a-z0-9]', '', str(raw).lower())
+    if len(fragment) < UUID_FRAGMENT_MIN_LEN:
+        return False
+    uuids = [match.replace('-', '').lower() for match in UUID_RE.findall(text)]
+    if not any(fragment in uuid for uuid in uuids):
+        return False
+    remainder = re.sub(r'[^a-z0-9]', '', UUID_RE.sub(' ', text).lower())
+    if fragment in remainder:
+        return False
+    info['account_last_4'] = None
+    logging.getLogger(__name__).info(
+        f"Dropped account_last_4 {raw!r}: it is a fragment of a UUID, not an account number"
+    )
+    return True
 
 
 def account_last4_should_read(info):

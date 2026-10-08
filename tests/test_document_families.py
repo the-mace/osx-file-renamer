@@ -168,6 +168,34 @@ class TestDocumentFamilyGoldens:
         }
         assert _filename(info, _load('berkowitz_bill.txt')) == 'Berkowitz Invoice 3353 20261001.pdf'
 
+    @pytest.mark.parametrize('model_id', ['6510508e', '0508', '2cfcb2375c25'])
+    def test_team_id_uuid_is_not_an_account(self, model_id):
+        info = {
+            'business_name': 'xAI',
+            'document_type': 'Invoice',
+            'document_title': None,
+            'invoice_date': '2026-10-08',
+            'invoice_number': 'LDKN-TM4H-GCEC',
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': model_id,
+        }
+        assert _filename(info, _load('xai_team_id_invoice.txt')) == 'xAI Invoice GCEC 20261008.pdf'
+
+    def test_account_number_matching_a_uuid_fragment_stays(self):
+        info = {
+            'business_name': 'xAI',
+            'document_type': 'Invoice',
+            'document_title': None,
+            'invoice_date': '2026-10-08',
+            'invoice_number': 'LDKN-TM4H-GCEC',
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '0508',
+        }
+        text = _load('xai_team_id_invoice.txt') + 'Account Number: 7710508\n'
+        assert _filename(info, text) == 'xAI Invoice 0508 20261008.pdf'
+
     def test_bank_mailing_address_is_not_a_premise(self):
         info = {
             'business_name': 'Bank of America',
