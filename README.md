@@ -279,7 +279,7 @@ Default path is optimized for short names and moderate latency:
 - LLM client runs in-process with content caching for retries
 - Fast non-reasoning model by default; override with `LLM_MODEL` if needed
 
-If you need it **faster or cheaper** later (e.g. local Tesseract for clean scans, path timing logs, cheaper vision models), see **Future Optimizations** in [`CLAUDE.md`](CLAUDE.md).
+If you need it **faster or cheaper** later (e.g. local Tesseract for clean scans, path timing logs, cheaper vision models), see **Future Optimizations** in [`AGENTS.md`](AGENTS.md).
 
 ## Troubleshooting
 
@@ -436,7 +436,8 @@ osx-file-renamer/
 │   └── fixtures/          # Real test files for integration tests
 ├── pyproject.toml         # Package configuration and dependencies
 ├── Makefile               # Build and development commands
-├── CLAUDE.md              # AI assistant guidance
+├── AGENTS.md              # AI assistant guidance
+├── CLAUDE.md              # Imports AGENTS.md
 └── README.md              # This file
 ```
 
