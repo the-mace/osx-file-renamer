@@ -20,6 +20,16 @@ def clear_llm_file_content_cache():
         pass
 
 
+@pytest.fixture(autouse=True)
+def no_llm_retry_delay(monkeypatch):
+    """Keep API retry backoff from slowing tests that exercise failing calls."""
+    try:
+        import llm_client
+        monkeypatch.setattr(llm_client, "API_RETRY_BASE_DELAY", 0)
+    except ImportError:
+        pass
+
+
 @pytest.fixture
 def sample_jpeg_data():
     """Minimal valid JPEG header bytes for testing."""

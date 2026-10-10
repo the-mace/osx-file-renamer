@@ -277,6 +277,7 @@ Default path is optimized for short names and moderate latency:
 
 - Text PDFs use `pdftotext` (pages 1–2); scans use vision on JPEG page renders
 - LLM client runs in-process with content caching for retries
+- A failed API call is retried up to 3 times with exponential backoff (1s, 2s, 4s); bad-key and bad-request errors fail at once. The final error is written to the log
 - Fast non-reasoning model by default; override with `LLM_MODEL` if needed
 
 If you need it **faster or cheaper** later (e.g. local Tesseract for clean scans, path timing logs, cheaper vision models), see **Future Optimizations** in [`AGENTS.md`](AGENTS.md).

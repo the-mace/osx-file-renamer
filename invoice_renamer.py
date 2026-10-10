@@ -938,6 +938,8 @@ def call_llm_api(prompt, file_path, all_pages=False):
         except SystemExit as e:
             code = e.code if isinstance(e.code, int) else 1
             logger.error(f"llm_client exited with code {code}")
+            if e.__cause__ is not None:
+                logger.error(f"llm_client error: {type(e.__cause__).__name__}: {e.__cause__}")
             raise RuntimeError(f"llm_client failed with exit code {code}") from e
 
         if result is None:

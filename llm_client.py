@@ -21,8 +21,10 @@ import mimetypes
 import subprocess
 import tempfile
 import glob
+import logging
+import time
 from typing import Optional, Dict, Any
-from litellm import completion
+from litellm import completion, AuthenticationError, BadRequestError, NotFoundError
 
 # Optional imports for image processing
 try:
@@ -57,6 +59,11 @@ PDF_EXTRACTION_TIMEOUT = 15
 CONVERSION_TIMEOUT = 60
 COMPRESSION_TIMEOUT = 30
 API_TIMEOUT = 120  # 120 seconds for LLM API calls
+# A momentary rate limit, 5xx, or dropped connection should not cost a file its name.
+API_MAX_RETRIES = 3
+API_RETRY_BASE_DELAY = 1  # seconds; doubles each retry (1, 2, 4)
+# Retrying cannot fix a bad key, a bad request, or a model that does not exist.
+NON_RETRYABLE_API_ERRORS = (AuthenticationError, BadRequestError, NotFoundError)
 # Extraction is a lookup, not a sample. 0 keeps the same vendor string on similar pages.
 LLM_TEMPERATURE = 0
 MIN_MEANINGFUL_TEXT = 10
@@ -769,22 +776,29 @@ def call_llm_api(prompt, model=None, file_path=None, all_pages=False, auto_visio
     # Log model being used (to stderr for subprocess capture)
     print(f"Using LLM model: {model}", file=sys.stderr)
 
-    try:
-        # Call LiteLLM completion
-        response = completion(
-            model=model,
-            messages=messages,
-            stream=False,
-            timeout=API_TIMEOUT,
-            temperature=LLM_TEMPERATURE,
-        )
+    for attempt in range(API_MAX_RETRIES + 1):
+        try:
+            # Call LiteLLM completion
+            response = completion(
+                model=model,
+                messages=messages,
+                stream=False,
+                timeout=API_TIMEOUT,
+                temperature=LLM_TEMPERATURE,
+            )
 
-        # Extract response text
-        return response.choices[0].message.content
+            # Extract response text
+            return response.choices[0].message.content
 
-    except Exception as e:
-        print(f"Error calling LLM API: {e}", file=sys.stderr)
-        sys.exit(1)
+        except Exception as e:
+            if attempt == API_MAX_RETRIES or isinstance(e, NON_RETRYABLE_API_ERRORS):
+                print(f"Error calling LLM API: {e}", file=sys.stderr)
+                # Chained so an in-process caller can log the real error.
+                raise SystemExit(1) from e
+            delay = API_RETRY_BASE_DELAY * 2 ** attempt
+            # In-process this reaches the renamer log; standalone, logging prints it to stderr.
+            logging.getLogger(__name__).warning(f"LLM API call failed ({type(e).__name__}: {e}); retry {attempt + 1}/{API_MAX_RETRIES} in {delay}s")
+            time.sleep(delay)
 
 
 def main():

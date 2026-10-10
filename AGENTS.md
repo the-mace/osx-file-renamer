@@ -123,6 +123,7 @@ make lint
 - Custom exceptions: LLMClientError, FileProcessingError, APIError
 - Automatically selects vision models when processing images
 - In-process file-content cache so date/USDF retries reuse extraction work
+- API call retries: `API_MAX_RETRIES` (3) with exponential backoff from `API_RETRY_BASE_DELAY` (1s, 2s, 4s). `NON_RETRYABLE_API_ERRORS` (auth, bad request, not found) fail at once. The final error is chained to `SystemExit` so `invoice_renamer` logs it
 
 ### Key Architecture Patterns
 

@@ -10,6 +10,7 @@ import json
 # Import the functions to test from invoice_renamer.py
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import logging
 from logging.handlers import TimedRotatingFileHandler
 from invoice_renamer import (
     setup_logging, get_log_file_path, call_llm_api, extract_invoice_info,
@@ -90,6 +91,19 @@ class TestCallLLMApi:
 
         with pytest.raises(RuntimeError):
             call_llm_api("test prompt", "/path/to/file.pdf")
+
+    @patch('llm_client.call_llm_api')
+    def test_call_llm_api_logs_error_behind_system_exit(self, mock_llm, caplog):
+        """The real API error chained to SystemExit reaches the log, not just the exit code."""
+        exit_error = SystemExit(1)
+        exit_error.__cause__ = ConnectionError("503 Service Unavailable")
+        mock_llm.side_effect = exit_error
+
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(RuntimeError):
+                call_llm_api("test prompt", "/path/to/file.pdf")
+
+        assert "ConnectionError: 503 Service Unavailable" in caplog.text
 
     @patch('llm_client.call_llm_api')
     def test_call_llm_api_propagates_errors(self, mock_llm):

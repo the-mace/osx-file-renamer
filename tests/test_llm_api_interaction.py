@@ -2,6 +2,7 @@ import sys
 import pytest
 import os
 from unittest.mock import patch, MagicMock
+import llm_client
 from llm_client import call_llm_api, load_env_file
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -222,6 +223,47 @@ class TestCallLLMApi:
 
         with pytest.raises(SystemExit):
             call_llm_api("Test", model="test")
+
+    @patch('llm_client.time.sleep')
+    @patch('llm_client.completion')
+    def test_call_llm_api_retries_transient_error(self, mock_completion, mock_sleep, monkeypatch):
+        """A transient failure is retried and the later success is returned."""
+        monkeypatch.setattr(llm_client, "API_RETRY_BASE_DELAY", 1)
+        mock_response = create_mock_litellm_response("Response")
+        mock_completion.side_effect = [Exception("503 Service Unavailable"), Exception("429 Too Many Requests"), mock_response]
+
+        assert call_llm_api("Test", model="test") == "Response"
+
+        assert mock_completion.call_count == 3
+        assert [c.args[0] for c in mock_sleep.call_args_list] == [1, 2]
+
+    @patch('llm_client.time.sleep')
+    @patch('llm_client.completion')
+    def test_call_llm_api_gives_up_after_max_retries(self, mock_completion, mock_sleep, monkeypatch):
+        """Three retries with exponential backoff, then exit with the real error chained."""
+        monkeypatch.setattr(llm_client, "API_RETRY_BASE_DELAY", 1)
+        error = Exception("503 Service Unavailable")
+        mock_completion.side_effect = error
+
+        with pytest.raises(SystemExit) as excinfo:
+            call_llm_api("Test", model="test")
+
+        assert excinfo.value.code == 1
+        assert excinfo.value.__cause__ is error
+        assert mock_completion.call_count == llm_client.API_MAX_RETRIES + 1 == 4
+        assert [c.args[0] for c in mock_sleep.call_args_list] == [1, 2, 4]
+
+    @patch('llm_client.time.sleep')
+    @patch('llm_client.completion')
+    def test_call_llm_api_does_not_retry_auth_error(self, mock_completion, mock_sleep):
+        """A bad API key fails immediately; retrying cannot fix it."""
+        mock_completion.side_effect = llm_client.AuthenticationError("bad key", llm_provider="xai", model="test")
+
+        with pytest.raises(SystemExit):
+            call_llm_api("Test", model="test")
+
+        assert mock_completion.call_count == 1
+        mock_sleep.assert_not_called()
 
 
 class TestLoadEnvFile:
