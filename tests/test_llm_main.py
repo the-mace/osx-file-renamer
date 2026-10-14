@@ -13,7 +13,6 @@ class TestMain:
     @patch('llm_client.call_llm_api')
     @patch('sys.argv', ['llm_client.py', 'Test prompt'])
     def test_main_basic_args(self, mock_call_api, capsys):
-        """Test main function with basic arguments."""
         mock_call_api.return_value = "Test response"
 
         main()
@@ -25,7 +24,6 @@ class TestMain:
     @patch('llm_client.call_llm_api')
     @patch('sys.argv', ['llm_client.py', '--model', 'test-model', 'Test prompt with spaces'])
     def test_main_custom_model(self, mock_call_api, capsys):
-        """Test main function with custom model."""
         mock_call_api.return_value = "Custom model response"
 
         main()
@@ -40,7 +38,6 @@ class TestMain:
     @patch('llm_client.call_llm_api')
     @patch('sys.argv', ['llm_client.py', '--file', 'test.pdf', '--all-pages', 'Analyze this PDF'])
     def test_main_with_file_all_pages(self, mock_call_api, capsys):
-        """Test main function with file and all-pages flag."""
         mock_call_api.return_value = "PDF analysis complete"
 
         main()
@@ -71,11 +68,9 @@ class TestMain:
 
     @patch('sys.argv', ['llm_client.py', '--help'])
     def test_main_help_flag(self, capsys):
-        """Test main function help output."""
         with pytest.raises(SystemExit) as excinfo:
             main()
 
-        # Help should exit with code 0
         assert excinfo.value.code == 0
 
         captured = capsys.readouterr()
@@ -139,7 +134,6 @@ class TestMain:
     @patch('llm_client.call_llm_api')
     @patch('sys.argv', ['llm_client.py', '', '--file', 'empty.txt'])
     def test_main_empty_prompt(self, mock_call_api, capsys):
-        """Test main function with empty prompt."""
         mock_call_api.return_value = "Response to empty prompt"
 
         main()

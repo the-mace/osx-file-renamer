@@ -50,7 +50,6 @@ class APIError(LLMClientError):
     pass
 
 
-# Constants
 MAX_RAW_SIZE = 7_500_000  # ~7.5MB raw = ~10MB base64
 MAX_BASE64_SIZE = 10_000_000  # 10MB base64 limit
 DEFAULT_PDF_DPI = 100
@@ -58,7 +57,7 @@ DEFAULT_MAX_PAGES = 2  # Pages 1-2 by default (covers logo/cover + content heade
 PDF_EXTRACTION_TIMEOUT = 15
 CONVERSION_TIMEOUT = 60
 COMPRESSION_TIMEOUT = 30
-API_TIMEOUT = 120  # 120 seconds for LLM API calls
+API_TIMEOUT = 120
 # A momentary rate limit, 5xx, or dropped connection should not cost a file its name.
 API_MAX_RETRIES = 3
 API_RETRY_BASE_DELAY = 1  # seconds; doubles each retry (1, 2, 4)
@@ -85,7 +84,6 @@ def _resolve_image_detail() -> str:
     return "high"
 
 
-# Supported file extensions
 IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif']
 COMPRESSED_FORMATS = ['.png', '.bmp', '.tiff', '.tif', '.pbm', '.ppm', '.pgm']
 
@@ -195,19 +193,16 @@ def process_image_file(file_path: str, mime_type: Optional[str] = None) -> Dict[
         if len(file_data) > MAX_RAW_SIZE:
             print(f"Image too large ({len(file_data):,} bytes), compressing...", file=sys.stderr)
 
-            # Try to compress the image using various methods
             compressed_data = compress_image(file_path, file_data, MAX_RAW_SIZE)
             if compressed_data:
                 file_data = compressed_data
             else:
-                # Final hard check - fail if still too large
                 print(f"Error: Image still too large after compression ({len(file_data):,} bytes raw, would be {int(len(file_data) * 1.33):,} bytes base64)", file=sys.stderr)
                 print(f"Maximum allowed: {MAX_RAW_SIZE:,} bytes raw ({MAX_BASE64_SIZE:,} bytes base64 limit)", file=sys.stderr)
                 sys.exit(1)
 
         base64_data = base64.b64encode(file_data).decode('utf-8')
 
-        # Double check base64 size
         if len(base64_data) > MAX_BASE64_SIZE:
             print(f"Error: Base64 image size ({len(base64_data):,} bytes) exceeds {MAX_BASE64_SIZE:,} bytes limit", file=sys.stderr)
             sys.exit(1)
@@ -267,7 +262,6 @@ def extract_embedded_images(file_path, all_pages=False):
     """Try to extract embedded images from PDF using pdfimages (faster than conversion)"""
 
     try:
-        # Try to find pdfimages in common locations
         pdfimages_paths = ['/opt/homebrew/bin/pdfimages', '/usr/bin/pdfimages', '/usr/local/bin/pdfimages']
         pdfimages_cmd = None
         for path in pdfimages_paths:
@@ -276,7 +270,6 @@ def extract_embedded_images(file_path, all_pages=False):
                 break
 
         if not pdfimages_cmd:
-            # Try to find it in PATH
             try:
                 result = subprocess.run(['which', 'pdfimages'], capture_output=True, text=True, check=True)
                 pdfimages_cmd = result.stdout.strip()
@@ -284,11 +277,9 @@ def extract_embedded_images(file_path, all_pages=False):
                 print("pdfimages not found, will use conversion fallback", file=sys.stderr)
                 return None
 
-        # Create temporary directory for extracted images
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_prefix = os.path.join(temp_dir, 'extracted')
 
-            # Extract images (with timeout)
             print("Attempting to extract embedded images...", file=sys.stderr)
             # Default: pages 1-2 (cover + content); --all-pages removes the limit
             pdfimages_args = [pdfimages_cmd, '-j', '-p']
@@ -299,14 +290,11 @@ def extract_embedded_images(file_path, all_pages=False):
             result = subprocess.run(pdfimages_args, capture_output=True, text=True, timeout=PDF_EXTRACTION_TIMEOUT)
 
             if result.returncode == 0:
-                # Look for extracted images
                 extracted_files = glob.glob(temp_prefix + '*')
 
                 if extracted_files:
-                    # Sort to get files in page order
                     extracted_files.sort()
 
-                    # Helper function to convert and process a single image file
                     def process_extracted_image(img_file):
                         _, ext = os.path.splitext(img_file)
                         ext_lower = ext[1:].lower() if ext else ""
@@ -323,7 +311,6 @@ def extract_embedded_images(file_path, all_pages=False):
                                     elif img.mode not in ('RGB', 'RGBA'):
                                         img = img.convert('RGB')
 
-                                    # Check if image might be inverted (mostly black background)
                                     if img.mode == 'L':
                                         pixels = list(img.getdata())
                                         if len(pixels) > 0:
@@ -337,7 +324,6 @@ def extract_embedded_images(file_path, all_pages=False):
                                     mime_type = "image/png"
                                 except (AttributeError, IOError, OSError) as e:
                                     print(f"Warning: Error converting {ext_lower.upper()}: {e}. Falling back to ImageMagick.", file=sys.stderr)
-                                    # Fall back to ImageMagick convert
                                     png_file = img_file + '.png'
                                     try:
                                         subprocess.run(['convert', img_file, png_file],
@@ -346,7 +332,7 @@ def extract_embedded_images(file_path, all_pages=False):
                                         mime_type = "image/png"
                                     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                                         print(f"Warning: ImageMagick conversion also failed: {e}", file=sys.stderr)
-                                        mime_type = "image/png"  # Try PNG mime type anyway
+                                        mime_type = "image/png"
                             else:
                                 # PIL not available, fall back to ImageMagick convert
                                 png_file = img_file + '.png'
@@ -357,13 +343,11 @@ def extract_embedded_images(file_path, all_pages=False):
                                     mime_type = "image/png"
                                 except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                                     print(f"Warning: ImageMagick conversion failed: {e}. No PIL available.", file=sys.stderr)
-                                    mime_type = "image/png"  # Try PNG mime type anyway
+                                    mime_type = "image/png"
                         else:
-                            # For known image types, use the extension; otherwise default to jpeg
                             if ext_lower in ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp', 'tiff', 'tif']:
                                 mime_type = f"image/{ext_lower}"
                             else:
-                                # Unknown format, log warning and use jpeg as fallback
                                 print(f"Warning: Unknown image extension '{ext_lower}', using image/jpeg as fallback", file=sys.stderr)
                                 mime_type = "image/jpeg"
 
@@ -407,7 +391,6 @@ def convert_pdf_to_images(file_path, max_pages=DEFAULT_MAX_PAGES):
             temp_image_path = tmp_file.name
 
         # Convert pages of PDF to JPEG (limit to max_pages to avoid huge documents)
-        # Try to find pdftoppm in common locations
         pdftoppm_paths = ['/opt/homebrew/bin/pdftoppm', '/usr/bin/pdftoppm', '/usr/local/bin/pdftoppm']
         pdftoppm_cmd = None
         for path in pdftoppm_paths:
@@ -416,7 +399,6 @@ def convert_pdf_to_images(file_path, max_pages=DEFAULT_MAX_PAGES):
                 break
 
         if not pdftoppm_cmd:
-            # Try to find it in PATH
             try:
                 result = subprocess.run(['which', 'pdftoppm'], capture_output=True, text=True, check=True)
                 pdftoppm_cmd = result.stdout.strip()
@@ -434,7 +416,6 @@ def convert_pdf_to_images(file_path, max_pages=DEFAULT_MAX_PAGES):
 
         result = subprocess.run(pdftoppm_args, capture_output=True, text=True, check=True, timeout=CONVERSION_TIMEOUT)
 
-        # Collect all generated images
         print("PDF conversion completed, collecting generated images...", file=sys.stderr)
         image_content = []
         page_num = 1
@@ -446,7 +427,6 @@ def convert_pdf_to_images(file_path, max_pages=DEFAULT_MAX_PAGES):
                 print(f"No more images found, stopping at page {page_num}", file=sys.stderr)
                 break
 
-            # Read the generated image and check size
             with open(actual_image_path, 'rb') as f:
                 file_data = f.read()
 
@@ -489,7 +469,6 @@ def convert_pdf_to_images(file_path, max_pages=DEFAULT_MAX_PAGES):
                 except (subprocess.CalledProcessError, FileNotFoundError):
                     print("Warning: Could not compress image", file=sys.stderr)
 
-            # Final hard check - fail if still too large
             if len(file_data) > MAX_RAW_SIZE:
                 print(f"Error: Image still too large after compression ({len(file_data):,} bytes raw, would be {int(len(file_data) * 1.33):,} bytes base64)", file=sys.stderr)
                 print(f"Maximum allowed: {MAX_RAW_SIZE:,} bytes raw (10MB base64 limit)", file=sys.stderr)
@@ -497,7 +476,6 @@ def convert_pdf_to_images(file_path, max_pages=DEFAULT_MAX_PAGES):
 
             base64_data = base64.b64encode(file_data).decode('utf-8')
 
-            # Double check base64 size
             if len(base64_data) > MAX_BASE64_SIZE:
                 print(f"Error: Base64 image size ({len(base64_data):,} bytes) exceeds 10MB limit", file=sys.stderr)
                 sys.exit(1)
@@ -510,7 +488,6 @@ def convert_pdf_to_images(file_path, max_pages=DEFAULT_MAX_PAGES):
                 }
             })
 
-            # Clean up temporary file
             try:
                 os.unlink(actual_image_path)
             except FileNotFoundError:
@@ -522,11 +499,9 @@ def convert_pdf_to_images(file_path, max_pages=DEFAULT_MAX_PAGES):
 
         print(f"Converted {len(image_content)} pages to images for analysis", file=sys.stderr)
 
-        # Return first image for single image processing, or combine for multi-page
         if len(image_content) == 1:
             return image_content[0]
         else:
-            # For multiple pages, we need to handle this in the API call
             return {
                 "type": "multi_image",
                 "images": image_content
@@ -574,11 +549,8 @@ def read_file_content(file_path, all_pages=False):
     max_pages = None if all_pages else DEFAULT_MAX_PAGES
 
     try:
-        # Handle PDFs with text extraction, fallback to image
         if file_ext == '.pdf':
             try:
-                # First try text extraction
-                # Try to find pdftotext in common locations
                 pdftotext_paths = ['/opt/homebrew/bin/pdftotext', '/usr/bin/pdftotext', '/usr/local/bin/pdftotext']
                 pdftotext_cmd = None
                 for path in pdftotext_paths:
@@ -587,7 +559,6 @@ def read_file_content(file_path, all_pages=False):
                         break
 
                 if not pdftotext_cmd:
-                    # Try to find it in PATH
                     try:
                         which_result = subprocess.run(['which', 'pdftotext'], capture_output=True, text=True, check=True)
                         pdftotext_cmd = which_result.stdout.strip()
@@ -633,20 +604,17 @@ def read_file_content(file_path, all_pages=False):
                 _file_content_cache[cache_key] = content
                 return content
 
-        # Handle image files
         elif file_ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff', '.tif']:
             content = process_image_file(file_path, mime_type)
             _file_content_cache[cache_key] = content
             return content
 
-        # For other files, try to read as text first
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = {"type": "text", "content": f.read()}
                 _file_content_cache[cache_key] = content
                 return content
         except UnicodeDecodeError:
-            # If text reading fails, check if it's a supported image format
             if file_ext in IMAGE_EXTENSIONS:
                 content = process_image_file(file_path, mime_type)
                 _file_content_cache[cache_key] = content
@@ -674,11 +642,11 @@ def load_env_file():
                     if line and not line.startswith('#') and '=' in line:
                         # Handle both "export KEY=value" and "KEY=value" formats
                         if line.startswith('export '):
-                            line = line[7:]  # Remove 'export ' prefix
+                            line = line[7:]
 
                         key, value = line.split('=', 1)
                         key = key.strip()
-                        value = value.strip().strip('"\'')  # Remove quotes
+                        value = value.strip().strip('"\'')
                         if key and not os.getenv(key):  # Only set if not already in environment
                             os.environ[key] = value
         except Exception as e:
@@ -707,10 +675,8 @@ def call_llm_api(prompt, model=None, file_path=None, all_pages=False, auto_visio
         - LLM_MODEL: Default model to use (optional)
         - LLM_API_KEY: Generic API key fallback (optional)
     """
-    # Load environment variables from ~/.env file
     load_env_file()
 
-    # Determine model to use
     if model is None:
         model = os.getenv("LLM_MODEL", DEFAULT_MODEL)
 
@@ -731,31 +697,26 @@ def call_llm_api(prompt, model=None, file_path=None, all_pages=False, auto_visio
     }
     model = model_mapping.get(model, model)
 
-    # Build message content
     if file_path:
         file_content = read_file_content(file_path, all_pages=all_pages)
         if file_content["type"] == "text":
-            # For text files, append to the prompt
             full_prompt = f"{prompt}\n\nFile content:\n{file_content['content']}"
             messages = [{"role": "user", "content": full_prompt}]
         else:
             # For binary files (images), use multimodal format with vision model
             if auto_vision and (not model or "vision" not in model.lower()):
                 print("Switching to vision model for image analysis...", file=sys.stderr)
-                # Determine vision model based on current model - use "latest" aliases when available
                 if not model or model.startswith("grok") or model.startswith("xai"):
-                    model = VISION_MODEL  # xai/grok-4-latest
+                    model = VISION_MODEL
                 elif model.startswith("gpt") or model.startswith("openai") or model.startswith("chatgpt"):
-                    model = "chatgpt-4o-latest"  # Latest OpenAI vision model
+                    model = "chatgpt-4o-latest"
                 elif model.startswith("claude") or model.startswith("anthropic"):
-                    model = "claude-3-5-sonnet-latest"  # Latest Claude with vision
+                    model = "claude-3-5-sonnet-latest"
                 elif model.startswith("gemini") or model.startswith("google"):
-                    model = "gemini/gemini-1.5-pro-latest"  # Latest Gemini with vision
+                    model = "gemini/gemini-1.5-pro-latest"
                 else:
-                    # Keep current model, assume it supports vision
                     print(f"Warning: Unknown model '{model}', assuming vision support", file=sys.stderr)
 
-            # Handle multi-image content (from multi-page PDFs)
             if file_content.get("type") == "multi_image":
                 content = [{"type": "text", "text": prompt}]
                 content.extend(file_content["images"])
@@ -769,7 +730,6 @@ def call_llm_api(prompt, model=None, file_path=None, all_pages=False, auto_visio
     else:
         messages = [{"role": "user", "content": prompt}]
 
-    # Ensure model is set (fallback to default if still None)
     if not model:
         model = DEFAULT_MODEL
 
@@ -778,7 +738,6 @@ def call_llm_api(prompt, model=None, file_path=None, all_pages=False, auto_visio
 
     for attempt in range(API_MAX_RETRIES + 1):
         try:
-            # Call LiteLLM completion
             response = completion(
                 model=model,
                 messages=messages,
@@ -787,7 +746,6 @@ def call_llm_api(prompt, model=None, file_path=None, all_pages=False, auto_visio
                 temperature=LLM_TEMPERATURE,
             )
 
-            # Extract response text
             return response.choices[0].message.content
 
         except Exception as e:

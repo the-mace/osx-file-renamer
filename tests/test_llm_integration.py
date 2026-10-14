@@ -18,7 +18,6 @@ from llm_client import (
 )
 
 
-# Path to fixtures directory
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), 'fixtures')
 
 
@@ -39,7 +38,6 @@ class TestPDFTextExtraction:
         # so it will be extracted as an image (possibly multi-page), not text.
         assert result["type"] in ["text", "image_url", "multi_image"]
 
-        # If it's text, verify content exists
         if result["type"] == "text":
             assert "content" in result
             assert len(result["content"]) > 0
@@ -74,7 +72,6 @@ class TestImageProcessing:
         assert "url" in result["image_url"]
         assert result["image_url"]["url"].startswith("data:image/jpeg;base64,")
 
-        # Verify it's valid base64
         import base64
         base64_part = result["image_url"]["url"].split(",")[1]
         decoded = base64.b64decode(base64_part)
@@ -107,7 +104,6 @@ class TestImageProcessing:
         assert result["type"] == "image_url"
         assert "url" in result["image_url"]
 
-        # Verify base64 doesn't exceed limits
         base64_part = result["image_url"]["url"].split(",")[1]
         from llm_client import MAX_BASE64_SIZE
         assert len(base64_part) <= MAX_BASE64_SIZE
@@ -123,7 +119,6 @@ class TestPDFConversion:
         if not os.path.exists(pdf_path):
             pytest.skip(f"Test fixture not found: {pdf_path}")
 
-        # Convert first page only
         result = convert_pdf_to_images(pdf_path, max_pages=1)
 
         # Should return single image (JPEG for smaller/faster vision payloads)
@@ -138,15 +133,12 @@ class TestPDFConversion:
         if not os.path.exists(pdf_path):
             pytest.skip(f"Test fixture not found: {pdf_path}")
 
-        # Try to extract embedded images first
         extracted = extract_embedded_images(pdf_path, all_pages=False)
 
         if extracted is None:
-            # If no embedded images, convert
             result = convert_pdf_to_images(pdf_path, max_pages=1)
             assert result is not None
         else:
-            # Extracted image should be valid
             assert extracted["type"] in ["image_url", "multi_image"]
 
 
@@ -173,7 +165,6 @@ class TestFullPipeline:
 
             result = read_file_content(file_path)
 
-            # Handle both single expected type and list of acceptable types
             if isinstance(expected_types, list):
                 assert result["type"] in expected_types, f"Failed for {filename}"
             else:
@@ -190,12 +181,10 @@ class TestFullPipeline:
 
         assert result["type"] == "image_url"
 
-        # Extract and decode base64
         import base64
         url = result["image_url"]["url"]
         base64_data = url.split(",")[1]
         decoded = base64.b64decode(base64_data)
 
-        # Verify we got actual image data
         assert len(decoded) > 100  # Should be reasonably sized
         assert decoded[:2] == b'\xff\xd8'  # JPEG magic bytes

@@ -1,6 +1,5 @@
 .PHONY: help install install-dev test test-cov test-fast lint clean run-invoice run-llm check all coverage-html uninstall reinstall
 
-# Colors for output
 BLUE := \033[36m
 RESET := \033[0m
 
@@ -115,7 +114,6 @@ uninstall:  ## Uninstall the package
 reinstall: uninstall install-dev  ## Reinstall the package in editable mode
 	@echo "$(BLUE)✓ Package reinstalled!$(RESET)"
 
-# Development shortcuts
 .PHONY: t l c
 t: test  ## Shortcut for 'test'
 l: lint  ## Shortcut for 'lint'

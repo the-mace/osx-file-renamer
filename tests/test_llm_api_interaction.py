@@ -23,7 +23,6 @@ class TestCallLLMApi:
     @patch('llm_client.completion')
     def test_call_llm_api_success_text(self, mock_completion, mock_getenv):
         """Test successful API call with text-only prompt."""
-        # Mock os.getenv to return appropriate values
         def getenv_side_effect(key, default=None):
             if key == "GROK_API_KEY":
                 return "test_api_key"
@@ -32,14 +31,12 @@ class TestCallLLMApi:
             return default
         mock_getenv.side_effect = getenv_side_effect
 
-        # Mock successful LiteLLM response
         mock_completion.return_value = create_mock_litellm_response("Test response")
 
         result = call_llm_api("Test prompt")
 
         assert result == "Test response"
 
-        # Verify API call structure
         mock_completion.assert_called_once()
         call_kwargs = mock_completion.call_args.kwargs
 
@@ -52,7 +49,6 @@ class TestCallLLMApi:
     @patch('llm_client.completion')
     def test_call_llm_api_env_file_fallback(self, mock_completion, mock_load_env):
         """Test loading API key from env file when not in environment."""
-        # Mock successful LiteLLM response
         mock_completion.return_value = create_mock_litellm_response("Response")
 
         result = call_llm_api("Test prompt")
@@ -70,8 +66,6 @@ class TestCallLLMApi:
     @patch('llm_client.os.getenv')
     @patch('llm_client.completion')
     def test_call_llm_api_with_text_file(self, mock_completion, mock_getenv, mock_read_file):
-        """Test API call with text file attachment."""
-        # Mock os.getenv to return appropriate values
         def getenv_side_effect(key, default=None):
             if key == "GROK_API_KEY":
                 return "test_api_key"
@@ -82,7 +76,6 @@ class TestCallLLMApi:
 
         mock_read_file.return_value = {"type": "text", "content": "File content here"}
 
-        # Mock successful LiteLLM response
         mock_completion.return_value = create_mock_litellm_response("Response")
 
         result = call_llm_api("Analyze this:", file_path="test.txt")
@@ -101,7 +94,6 @@ class TestCallLLMApi:
     @patch('llm_client.completion')
     def test_call_llm_api_with_image_file(self, mock_completion, mock_getenv, mock_read_file):
         """Test API call with image file switches to vision model."""
-        # Mock os.getenv to return appropriate values
         def getenv_side_effect(key, default=None):
             if key == "GROK_API_KEY":
                 return "test_api_key"
@@ -118,7 +110,6 @@ class TestCallLLMApi:
             }
         }
 
-        # Mock successful LiteLLM response
         mock_completion.return_value = create_mock_litellm_response("Image analyzed")
 
         result = call_llm_api("Analyze this image:", file_path="test.jpg")
@@ -134,7 +125,6 @@ class TestCallLLMApi:
     @patch('llm_client.completion')
     def test_call_llm_api_with_multi_image(self, mock_completion, mock_getenv, mock_read_file):
         """Test API call with multiple images from PDF."""
-        # Mock os.getenv to return appropriate values
         def getenv_side_effect(key, default=None):
             if key == "GROK_API_KEY":
                 return "test_api_key"
@@ -157,7 +147,6 @@ class TestCallLLMApi:
             ]
         }
 
-        # Mock successful LiteLLM response
         mock_completion.return_value = create_mock_litellm_response("Multi-page analyzed")
 
         result = call_llm_api("Analyze PDF:", file_path="test.pdf", all_pages=True)
@@ -176,8 +165,6 @@ class TestCallLLMApi:
     @patch('llm_client.os.getenv')
     @patch('llm_client.completion')
     def test_call_llm_api_custom_model(self, mock_completion, mock_getenv):
-        """Test API call with custom model specified."""
-        # Mock os.getenv to return appropriate values
         def getenv_side_effect(key, default=None):
             if key == "GROK_API_KEY":
                 return "test_api_key"
@@ -186,21 +173,17 @@ class TestCallLLMApi:
             return default
         mock_getenv.side_effect = getenv_side_effect
 
-        # Mock successful LiteLLM response
         mock_completion.return_value = create_mock_litellm_response("Response")
 
         result = call_llm_api("Test", model="custom-model")
 
         assert result == "Response"
 
-        # Verify custom model in request
         call_kwargs = mock_completion.call_args.kwargs
         assert call_kwargs['model'] == "custom-model"
 
     @patch('llm_client.completion')
     def test_call_llm_api_http_error(self, mock_completion):
-        """Test handling of API errors."""
-        # Mock LiteLLM raising an exception
         mock_completion.side_effect = Exception("API Error: 401 Unauthorized")
 
         with pytest.raises(SystemExit):
@@ -209,7 +192,6 @@ class TestCallLLMApi:
     @patch('llm_client.completion')
     def test_call_llm_api_invalid_response(self, mock_completion):
         """Test handling of malformed API responses."""
-        # Mock response with invalid structure
         mock_completion.side_effect = Exception("Invalid response structure")
 
         with pytest.raises(SystemExit):
@@ -218,7 +200,6 @@ class TestCallLLMApi:
     @patch('llm_client.completion')
     def test_call_llm_api_missing_choices(self, mock_completion):
         """Test handling of API responses without choices."""
-        # Mock response with missing choices
         mock_completion.side_effect = AttributeError("'NoneType' object has no attribute 'choices'")
 
         with pytest.raises(SystemExit):
@@ -281,18 +262,14 @@ class TestLoadEnvFile:
 
                 load_env_file()
 
-                # Verify environment variables were set
                 assert mock_getenv.call_count >= 0  # Can't easily verify environ setting with patching
 
     def test_load_env_file_nonexistent(self):
-        """Test handling of nonexistent .env file."""
         with patch('os.path.expanduser', return_value="/nonexistent/.env"):
             with patch('os.path.exists', return_value=False):
-                # Should not raise exception
                 load_env_file()
 
     def test_load_env_file_malformed(self, tmp_path):
-        """Test handling of malformed .env file."""
         env_file = tmp_path / ".env"
         env_file.write_text('invalid line\nGROK_API_KEY = test\n')  # Extra spaces
 
@@ -310,7 +287,6 @@ class TestLoadEnvFile:
         env_file.write_text('KEY1="value with spaces"\nKEY2=\'single quotes\'\n')
 
         with patch('os.path.expanduser', return_value=str(env_file)):
-            # Clear any existing values
             if 'KEY1' in os.environ:
                 del os.environ['KEY1']
             if 'KEY2' in os.environ:
@@ -322,7 +298,6 @@ class TestLoadEnvFile:
             assert os.environ.get('KEY1') == 'value with spaces'
             assert os.environ.get('KEY2') == 'single quotes'
 
-            # Cleanup
             if 'KEY1' in os.environ:
                 del os.environ['KEY1']
             if 'KEY2' in os.environ:
@@ -349,20 +324,16 @@ class TestLoadEnvFile:
         env_file = tmp_path / ".env"
         env_file.write_text('EXISTING_VAR=new_value\n')
 
-        # Set existing value
         os.environ['EXISTING_VAR'] = 'original_value'
 
         with patch('os.path.expanduser', return_value=str(env_file)):
             load_env_file()
 
-            # Should keep original value
             assert os.environ.get('EXISTING_VAR') == 'original_value'
 
-            # Cleanup
             del os.environ['EXISTING_VAR']
 
     def test_load_env_file_with_comments_and_empty_lines(self, tmp_path):
-        """Test handling of comments and empty lines."""
         env_file = tmp_path / ".env"
         env_file.write_text('# This is a comment\n\nKEY=value\n  \n# Another comment\n')
 

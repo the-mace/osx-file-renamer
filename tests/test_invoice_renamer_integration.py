@@ -3,21 +3,16 @@ import os
 import sys
 from unittest.mock import patch
 
-# Import the functions to test from invoice_renamer.py
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from invoice_renamer import rename_invoice, main
 
-
-# ==================== INTEGRATION TESTS ====================
 
 class TestRenameInvoiceBasic:
     """Test basic rename_invoice functionality."""
 
     @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_basic_invoice(self, mock_extract, tmp_path, sample_invoice_info):
-        """Test basic invoice renaming."""
-        # Create test file
         test_file = tmp_path / "original.pdf"
         test_file.write_text("test content")
 
@@ -27,7 +22,6 @@ class TestRenameInvoiceBasic:
 
         assert result is True
         # Note: "Company" is a trailing word that gets removed by clean_filename
-        # Expected: "Test Invoice 1234 20240115.pdf"
         expected_name = "Test Invoice 1234 20240115.pdf"
         assert (tmp_path / expected_name).exists()
         assert not test_file.exists()
@@ -44,13 +38,11 @@ class TestRenameInvoiceBasic:
 
         assert result is True
         # "Credit Card" is abbreviated to "CC" by clean_filename
-        # Expected: "Chase Bank CC Statement 5678 20240115.pdf"
         expected_name = "Chase Bank CC Statement 5678 20240115.pdf"
         assert (tmp_path / expected_name).exists()
 
     @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_with_patient_name(self, mock_extract, tmp_path, sample_vet_invoice_info):
-        """Test veterinary invoice with patient name."""
         test_file = tmp_path / "vet.pdf"
         test_file.write_text("test content")
 
@@ -59,7 +51,6 @@ class TestRenameInvoiceBasic:
         result = rename_invoice(str(test_file))
 
         assert result is True
-        # Expected: "Veterinary Clinic Invoice - Fluffy 9876 20240115.pdf"
         expected_name = "Veterinary Clinic Invoice - Fluffy 9876 20240115.pdf"
         assert (tmp_path / expected_name).exists()
 
@@ -108,7 +99,6 @@ class TestRenameInvoiceBasic:
         result = rename_invoice(str(test_file))
 
         assert result is True
-        # Expected: "Company Invoice 1234.pdf" (no date)
         expected_name = "Company Invoice 1234.pdf"
         assert (tmp_path / expected_name).exists()
 
@@ -229,7 +219,6 @@ class TestRenameInvoiceDuplicateHandling:
     @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_duplicate_adds_counter(self, mock_extract, tmp_path, sample_invoice_info):
         """Test that duplicate filenames get counter inserted."""
-        # Create test file
         test_file = tmp_path / "original.pdf"
         test_file.write_text("test content")
 
@@ -242,7 +231,6 @@ class TestRenameInvoiceDuplicateHandling:
         result = rename_invoice(str(test_file))
 
         assert result is True
-        # Should add counter before date: "Test Invoice 1234 2 20240115.pdf"
         expected_name = "Test Invoice 1234 2 20240115.pdf"
         assert (tmp_path / expected_name).exists()
         assert existing.exists()  # Original unchanged
@@ -289,7 +277,6 @@ class TestRenameInvoiceDuplicateHandling:
         result = rename_invoice(str(test_file))
 
         assert result is True
-        # Counter appended at end: "Company Invoice 1234 2.pdf"
         expected_name = "Company Invoice 1234 2.pdf"
         assert (tmp_path / expected_name).exists()
 
@@ -445,7 +432,6 @@ class TestRenameInvoiceErrorHandling:
 
     @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_file_not_found(self, mock_extract, capsys):
-        """Test handling of nonexistent file."""
         result = rename_invoice("/nonexistent/file.pdf")
 
         assert result is False
@@ -455,7 +441,6 @@ class TestRenameInvoiceErrorHandling:
 
     @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_os_error_during_rename(self, mock_extract, tmp_path, sample_invoice_info):
-        """Test handling of OS errors during rename."""
         test_file = tmp_path / "test.pdf"
         test_file.write_text("test content")
 
@@ -500,8 +485,6 @@ class TestRenameInvoiceErrorHandling:
             assert result is False
 
 
-# ==================== MAIN FUNCTION TESTS ====================
-
 class TestMainEdgeCases:
     """Test edge cases for main function."""
 
@@ -509,7 +492,6 @@ class TestMainEdgeCases:
     @patch('invoice_renamer.rename_invoice')
     @patch('sys.argv', ['invoice_renamer.py', '--dry-run', '--move-to', '/target', '--all-pages', '/path/to/file.pdf'])
     def test_main_all_flags_combined(self, mock_rename, mock_setup_logging):
-        """Test main with all flags combined."""
         mock_rename.return_value = True
 
         with pytest.raises(SystemExit) as excinfo:
@@ -522,7 +504,6 @@ class TestMainEdgeCases:
     @patch('invoice_renamer.rename_invoice')
     @patch('sys.argv', ['invoice_renamer.py', 'file with spaces.pdf'])
     def test_main_filename_with_spaces(self, mock_rename, mock_setup_logging):
-        """Test main with filename containing spaces."""
         mock_rename.return_value = True
 
         with pytest.raises(SystemExit) as excinfo:
@@ -534,7 +515,6 @@ class TestMainEdgeCases:
     @patch('invoice_renamer.setup_logging')
     @patch('sys.argv', ['invoice_renamer.py', '--invalid-flag', 'file.pdf'])
     def test_main_invalid_flag(self, mock_setup_logging):
-        """Test main with invalid flag."""
         with pytest.raises(SystemExit) as excinfo:
             main()
 

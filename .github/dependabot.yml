@@ -1,6 +1,5 @@
 version: 2
 updates:
-  # Python dependencies
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
@@ -17,7 +16,6 @@ updates:
       prefix: "chore"
       prefix-development: "chore"
       include: "scope"
-    # Group minor and patch updates together
     groups:
       dev-dependencies:
         dependency-type: "development"
@@ -30,7 +28,6 @@ updates:
           - "minor"
           - "patch"
 
-  # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

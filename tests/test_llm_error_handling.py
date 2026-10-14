@@ -31,7 +31,6 @@ class TestErrorHandling:
 
     @patch('urllib.request.urlopen')
     def test_call_llm_api_network_timeout(self, mock_urlopen):
-        """Test handling of network timeouts."""
         import urllib.error
         mock_urlopen.side_effect = urllib.error.URLError("Network timeout")
 
@@ -59,10 +58,8 @@ class TestErrorHandling:
 
     @patch('urllib.request.urlopen')
     def test_call_llm_api_server_error_500(self, mock_urlopen):
-        """Test handling of server errors."""
         import urllib.error
 
-        # Mock HTTPError with body content
         error_body = MagicMock()
         error_body.read.return_value = b'{"error": "Internal server error"}'
         error_body.fp = error_body
@@ -82,7 +79,6 @@ class TestErrorHandling:
 
     @patch('urllib.request.urlopen')
     def test_call_llm_api_rate_limit_error(self, mock_urlopen):
-        """Test handling of rate limit errors."""
         import urllib.error
 
         error_body = MagicMock()
@@ -118,7 +114,6 @@ class TestErrorHandling:
 
     @patch('urllib.request.urlopen')
     def test_call_llm_api_empty_response(self, mock_urlopen):
-        """Test handling of empty responses."""
         mock_response = MagicMock()
         mock_response.read.return_value = b''
         mock_response.__enter__.return_value = mock_response
@@ -132,7 +127,6 @@ class TestErrorHandling:
 
     @patch('urllib.request.urlopen')
     def test_call_llm_api_malformed_json_response(self, mock_urlopen):
-        """Test handling of malformed JSON responses."""
         mock_response = MagicMock()
         mock_response.read.return_value = b'{"choices": [{"message": }}}'  # Malformed JSON
         mock_response.__enter__.return_value = mock_response
@@ -160,7 +154,6 @@ class TestErrorHandling:
 
     @patch('urllib.request.urlopen')
     def test_call_llm_api_empty_choices_array(self, mock_urlopen):
-        """Test handling of responses with empty choices array."""
         mock_response = MagicMock()
         mock_response.read.return_value = b'{"choices": []}'
         mock_response.__enter__.return_value = mock_response
@@ -204,7 +197,6 @@ class TestErrorHandling:
     @patch('llm_client.os.getenv', return_value="test_key")
     @patch('urllib.request.urlopen')
     def test_call_llm_api_file_processing_error(self, mock_urlopen, mock_getenv, mock_read_file):
-        """Test handling of file processing errors."""
         mock_read_file.side_effect = SystemExit(1)
 
         with pytest.raises(SystemExit) as excinfo:
@@ -216,7 +208,6 @@ class TestErrorHandling:
 class TestEnvFileErrorHandling:
 
     def test_load_env_file_with_read_error(self, tmp_path):
-        """Test handling of file read errors."""
         env_file = tmp_path / ".env"
         env_file.write_text("GROK_API_KEY=test_key")
 
@@ -231,7 +222,6 @@ class TestEnvFileErrorHandling:
         env_file.write_text('INVALID_LINE_WITHOUT_EQUALS\nGROK_API_KEY=test\nEMPTY_VALUE=\n')
 
         with patch('os.path.expanduser', return_value=str(env_file)):
-            # Should handle gracefully
             load_env_file()
 
     def test_load_env_file_with_unicode_error(self, tmp_path):
@@ -243,7 +233,6 @@ class TestEnvFileErrorHandling:
             f.write(b'\xff\xfe\x00\x00INVALID_UTF8_DATA')
 
         with patch('os.path.expanduser', return_value=str(env_file)):
-            # Should handle gracefully without crashing
             load_env_file()
 
 

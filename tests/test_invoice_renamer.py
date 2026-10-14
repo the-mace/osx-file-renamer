@@ -7,7 +7,6 @@ from datetime import datetime
 from unittest.mock import patch, MagicMock
 import json
 
-# Import the functions to test from invoice_renamer.py
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import logging
@@ -76,7 +75,6 @@ class TestCallLLMApi:
 
     @patch('llm_client.call_llm_api')
     def test_call_llm_api_with_all_pages(self, mock_llm):
-        """Test call_llm_api with all_pages flag."""
         mock_llm.return_value = "Full API Response"
 
         result = call_llm_api("test prompt", "/path/to/file.pdf", all_pages=True)
@@ -107,7 +105,6 @@ class TestCallLLMApi:
 
     @patch('llm_client.call_llm_api')
     def test_call_llm_api_propagates_errors(self, mock_llm):
-        """Test call_llm_api propagates unexpected errors."""
         mock_llm.side_effect = RuntimeError("SSL error")
 
         with pytest.raises(RuntimeError):
@@ -142,26 +139,21 @@ class TestExtractInvoiceInfo:
 
         result = extract_invoice_info("/path/to/invoice.pdf")
 
-        # Should return fallback values with current date
         assert result["business_name"] == "Unknown"
         assert result["document_type"] == "Document"
-        # Should use current date as fallback (check format YYYY-MM-DD)
         assert re.match(r'\d{4}-\d{2}-\d{2}', result["invoice_date"])
 
     @patch('invoice_renamer.call_llm_api')
     def test_extract_invoice_info_api_failure(self, mock_call_api):
-        """Test extract_invoice_info with API call failure."""
         mock_call_api.side_effect = subprocess.CalledProcessError(1, 'cmd')
 
         result = extract_invoice_info("/path/to/invoice.pdf")
 
-        # Should return fallback values
         assert result["business_name"] == "Unknown"
         assert result["document_type"] == "Document"
 
     @patch('invoice_renamer.call_llm_api')
     def test_extract_invoice_info_all_pages(self, mock_call_api):
-        """Test extract_invoice_info with all_pages parameter."""
         mock_response = {
             "business_name": "Test Company",
             "document_type": "Invoice",
@@ -185,13 +177,11 @@ class TestExtractInvoiceInfo:
 class TestCleanFilename:
 
     def test_clean_filename_basic(self):
-        """Test clean_filename basic functionality."""
         assert clean_filename("Test Company Inc.") == "Test Company Inc."
         assert clean_filename("  Spaced   Name  ") == "Spaced Name"
         assert clean_filename("Bad<>Chars/\\:*?|") == "BadChars"
 
     def test_clean_filename_length_limit(self):
-        """Test clean_filename length limiting."""
         long_name = "A" * 100
         result = clean_filename(long_name)
         assert len(result) <= 50
@@ -209,7 +199,6 @@ class TestCleanFilename:
         assert result == "IBM Inc"
 
     def test_clean_filename_word_limit(self):
-        """Test clean_filename with word limiting."""
         long_name = "This is a very long company name with many words"
         result = clean_filename(long_name, limit_words=3)
         assert result == "This is"
@@ -238,7 +227,6 @@ class TestCleanFilename:
 class TestFormatDate:
 
     def test_format_date_standard_formats(self):
-        """Test format_date with various standard formats."""
         assert format_date("2024-01-15") == "20240115"
         assert format_date("01/15/2024") == "20240115"
         assert format_date("15/01/2024") == "20240115"
@@ -252,7 +240,6 @@ class TestFormatDate:
         assert format_date("2040-01-01") == "00000000"  # Too new
 
     def test_format_date_malformed(self):
-        """Test format_date with malformed date strings."""
         assert format_date("not-a-date") == "00000000"
         assert format_date("") == "00000000"
         assert format_date(None) == "00000000"
@@ -280,13 +267,11 @@ class TestRenameInvoice:
         Complex file system integration tests with rename_invoice were removed due to
         brittle mocking requirements and are better tested via integration testing.
         """
-        # Educational note about the removed tests
         pass
 
     @patch('invoice_renamer.extract_invoice_info')
     @patch('invoice_renamer.os.path.exists')
     def test_rename_invoice_file_not_found(self, mock_exists, mock_extract):
-        """Test rename_invoice with nonexistent file."""
         mock_exists.return_value = False
 
         result = rename_invoice("/nonexistent/file.pdf")
@@ -422,7 +407,6 @@ class TestConvertToPdf:
             with patch('os.path.exists', side_effect=lambda p: p == str(fake_soffice)):
                 # Override the searched paths to include our fake
                 with patch('invoice_renamer._find_soffice_cmd', return_value=str(fake_soffice)):
-                    # Just verify _find_soffice_cmd is callable and returns a string or None
                     assert _find_soffice_cmd() is None or isinstance(_find_soffice_cmd(), str)
 
 
@@ -455,7 +439,6 @@ class TestRenameInvoiceConversion:
 
         assert result is True
         mock_convert.assert_called_once_with(str(src))
-        # Original jpg should be deleted
         mock_unlink.assert_called_with(str(src))
 
     @patch('invoice_renamer.convert_to_pdf')
@@ -549,7 +532,6 @@ class TestRenameInvoiceConversion:
             rename_invoice(str(src), dry_run=True)
 
         captured = capsys.readouterr()
-        # The new filename should end in .pdf
         assert ".pdf" in captured.out
 
     @patch('invoice_renamer.extract_invoice_info')
@@ -2080,7 +2062,6 @@ class TestMain:
     @patch('invoice_renamer.rename_invoice')
     @patch('sys.argv', ['invoice_renamer.py', '/path/to/file.pdf'])
     def test_main_basic_args(self, mock_rename, mock_setup_logging):
-        """Test main function with basic arguments."""
         mock_rename.return_value = True
 
         with pytest.raises(SystemExit) as excinfo:
@@ -2106,7 +2087,6 @@ class TestMain:
     @patch('invoice_renamer.rename_invoice')
     @patch('sys.argv', ['invoice_renamer.py', '--all-pages', '/path/to/file.pdf'])
     def test_main_with_all_pages(self, mock_rename, mock_setup_logging):
-        """Test main function with all-pages flag."""
         mock_rename.return_value = True
 
         with pytest.raises(SystemExit) as excinfo:
@@ -2129,7 +2109,6 @@ class TestMain:
     @patch('invoice_renamer.rename_invoice')
     @patch('sys.argv', ['invoice_renamer.py', '/path/to/file.pdf'])
     def test_main_rename_failure(self, mock_rename, mock_setup_logging):
-        """Test main function handles rename failure."""
         mock_rename.return_value = False
 
         with pytest.raises(SystemExit) as excinfo:
@@ -2140,18 +2119,15 @@ class TestMain:
     @patch('invoice_renamer.setup_logging')
     @patch('sys.argv', ['invoice_renamer.py', '--help'])
     def test_main_help_flag(self, mock_setup_logging):
-        """Test main function help output."""
         with pytest.raises(SystemExit) as excinfo:
             main()
 
-        # Help should exit with code 0
         assert excinfo.value.code == 0
 
     @patch('invoice_renamer.setup_logging')
     @patch('invoice_renamer.rename_invoice')
     @patch('sys.argv', ['invoice_renamer.py', '--dry-run', '/path/to/file.pdf'])
     def test_main_keyboard_interrupt(self, mock_rename, mock_setup_logging):
-        """Test main function handles keyboard interrupt."""
         mock_rename.side_effect = KeyboardInterrupt()
 
         with pytest.raises(SystemExit) as excinfo:
@@ -2162,7 +2138,6 @@ class TestMain:
     @patch('invoice_renamer.setup_logging')
     @patch('sys.argv', ['invoice_renamer.py', '/path/to/file.pdf'])
     def test_main_unexpected_error(self, mock_setup_logging):
-        """Test main function handles unexpected errors."""
         with patch('invoice_renamer.rename_invoice', side_effect=Exception("Unexpected error")):
             with pytest.raises(SystemExit) as excinfo:
                 main()

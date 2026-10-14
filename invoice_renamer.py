@@ -34,7 +34,6 @@ CONVERTIBLE_IMAGE_EXTENSIONS = ['.heic', '.jpg', '.jpeg', '.png', '.webp', '.tif
 CONVERTIBLE_DOC_EXTENSIONS = ['.docx']
 CONVERTIBLE_EXTENSIONS = CONVERTIBLE_IMAGE_EXTENSIONS + CONVERTIBLE_DOC_EXTENSIONS
 
-# ---------------------------------------------------------------------------
 # Naming contract
 #
 # The model returns facts. document_families reads labeled lines on text PDFs
@@ -52,7 +51,6 @@ CONVERTIBLE_EXTENSIONS = CONVERTIBLE_IMAGE_EXTENSIONS + CONVERTIBLE_DOC_EXTENSIO
 #   - otherwise qualifier replaces type (after stripping redundant type/vendor words)
 #
 # document_title JSON key = optional short QUALIFIER (premise, subtype, form name).
-# ---------------------------------------------------------------------------
 
 # Fact-extraction prompt. Label priority and filename assembly live in code.
 INVOICE_EXTRACTION_PROMPT = """Extract facts from this document as JSON. Do NOT invent a filename — code builds it from these fields.
@@ -721,7 +719,6 @@ def send_notification(title, message):
         logger.warning(f"Could not send notification: {e}")
 
 
-# Focused date extraction prompt
 DATE_EXTRACTION_PROMPT = """Look carefully at this document and find the date.
 For receipts: Look for the transaction date/time near the top (may be in the header, labeled "Date", or near business info).
 For invoices: Look for "Invoice Date", "Bill Date", etc.
@@ -1043,7 +1040,6 @@ def _call_llm_for_invoice_info(file_path, all_pages=False, filename_hint=None):
         return response
     except (subprocess.CalledProcessError, FileNotFoundError, RuntimeError, Exception) as e:
         logger.error(f"Failed to call LLM API: {e}")
-        # Log detailed environment info for debugging
         logger.error("UNKNOWN_DOCUMENT_FALLBACK: LLM API call failed")
         logger.error(f"  Python executable: {sys.executable}")
         logger.error(f"  File path: {file_path}")
@@ -1069,7 +1065,6 @@ def _parse_llm_response(response):
             json_str = json_match.group()
             parsed_info = json.loads(json_str)
         else:
-            # Fallback: try to parse the entire response as JSON
             parsed_info = json.loads(response)
 
         logger.info(f"Extracted info: {parsed_info}")
@@ -1091,7 +1086,6 @@ def _retry_date_extraction(file_path, all_pages=False):
     try:
         date_response = call_llm_api(DATE_EXTRACTION_PROMPT, file_path, all_pages=all_pages)
         date_response = date_response.strip()
-        # Check if it looks like a date (YYYY-MM-DD format)
         if re.match(r'\d{4}-\d{2}-\d{2}', date_response):
             logger.info(f"Focused extraction found date: {date_response}")
             return date_response
@@ -1120,7 +1114,6 @@ def _validate_invoice_data(parsed_info):
             f"account_last_4={parsed_info.get('account_last_4')}"
         )
 
-    # Validate that document_type was provided
     if not parsed_info.get('document_type'):
         logger.warning("Document type not provided by API, defaulting to 'Document'")
         parsed_info['document_type'] = 'Document'
@@ -1464,12 +1457,10 @@ def extract_invoice_info(file_path, all_pages=False, filename_hint=None):
     if filename_hint:
         logger.info(f"Using original filename as hint: {filename_hint}")
 
-    # Call LLM API
     response = _call_llm_for_invoice_info(file_path, all_pages, filename_hint)
     if response is None:
         return _create_fallback_info()
 
-    # Parse JSON response
     parsed_info = _parse_llm_response(response)
     if parsed_info is None:
         return _create_fallback_info()
@@ -1497,7 +1488,6 @@ def extract_invoice_info(file_path, all_pages=False, filename_hint=None):
                 except OSError:
                     pass
 
-    # If date is missing, try a focused follow-up query to extract it
     if not parsed_info.get('invoice_date'):
         date = _retry_date_extraction(file_path, all_pages)
         if date:
@@ -1518,7 +1508,6 @@ def extract_invoice_info(file_path, all_pages=False, filename_hint=None):
         filename_hint=filename_hint,
     )
 
-    # Validate and log warnings
     _validate_invoice_data(parsed_info)
 
     return parsed_info
@@ -1539,10 +1528,9 @@ def clean_filename(text, limit_words=None):
     if not text:
         return "Unknown"
 
-    # Remove or replace problematic characters
-    cleaned = re.sub(r'[<>:"/\\|?*,]', '', text)  # Remove illegal filename chars
-    cleaned = re.sub(r'\s+', ' ', cleaned)        # Normalize whitespace
-    cleaned = cleaned.strip()                     # Remove leading/trailing space
+    cleaned = re.sub(r'[<>:"/\\|?*,]', '', text)
+    cleaned = re.sub(r'\s+', ' ', cleaned)
+    cleaned = cleaned.strip()
 
     # Collapse single-letter initials around & so "A & L Pool Service" is 3 words
     # (not 5). Bare "&" as its own token also blows the business_name word cap.
@@ -1552,16 +1540,14 @@ def clean_filename(text, limit_words=None):
     # Skip titlecase for short names (likely acronyms like USAA, IBM, etc.)
     letter_chars = [c for c in cleaned if c.isalpha()]
     if letter_chars and sum(1 for c in letter_chars if c.isupper()) > len(letter_chars) * 0.7:
-        if len(cleaned) >= 5:  # Only apply titlecase to names 5+ characters
+        if len(cleaned) >= 5:
             cleaned = titlecase(cleaned)
 
-    # Limit to specified number of words if requested
     if limit_words:
         words = cleaned.split()
         if len(words) > limit_words:
             cleaned = ' '.join(words[:limit_words])
 
-        # Remove trailing articles/conjunctions/prepositions/common business terms
         trailing_words = ['and', 'or', 'of', 'the', 'a', 'an', 'for', 'to', 'in', 'at', 'by', 'with', 'company', 'inc', 'llc', 'ltd', 'corp', 'corporation']
         words = cleaned.split()
         while words and words[-1].lower() in trailing_words:
@@ -1569,11 +1555,9 @@ def clean_filename(text, limit_words=None):
         if words:
             cleaned = ' '.join(words)
 
-    # Limit length
     if len(cleaned) > 50:
         cleaned = cleaned[:50].rstrip()
 
-    # Shorten known verbose vendor/terms for concise filenames
     cleaned = _apply_filename_abbreviations(cleaned)
 
     return cleaned if cleaned else "Unknown"
@@ -1617,23 +1601,21 @@ def format_date(date_str):
     if not date_str:
         return "00000000"
 
-    # Try different date formats
     date_formats = [
-        "%Y-%m-%d",      # 2024-09-23
-        "%m/%d/%Y",      # 09/23/2024
-        "%m-%d-%Y",      # 09-23-2024
-        "%d/%m/%Y",      # 23/09/2024
-        "%Y/%m/%d",      # 2024/09/23
-        "%B %d, %Y",     # September 23, 2024
-        "%b %d, %Y",     # Sep 23, 2024
-        "%d %B %Y",      # 23 September 2024
-        "%d %b %Y",      # 23 Sep 2024
+        "%Y-%m-%d",
+        "%m/%d/%Y",
+        "%m-%d-%Y",
+        "%d/%m/%Y",
+        "%Y/%m/%d",
+        "%B %d, %Y",
+        "%b %d, %Y",
+        "%d %B %Y",
+        "%d %b %Y",
     ]
 
     for fmt in date_formats:
         try:
             date_obj = datetime.strptime(date_str, fmt)
-            # Validate that the date is reasonable (not in far future/past)
             now = datetime.now()
             if date_obj.year < 1900 or date_obj.year > now.year + 10:
                 continue
@@ -1646,9 +1628,7 @@ def format_date(date_str):
     if match:
         try:
             year, month, day = map(int, match.groups())
-            # Basic date validation
             if 1 <= month <= 12 and 1 <= day <= 31 and 1900 <= year <= datetime.now().year + 10:
-                # Additional day validation for months with < 31 days
                 days_in_month = [31, 29 if (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)) else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]
                 if day <= days_in_month:
                     return f"{year:04d}{month:02d}{day:02d}"
@@ -1981,10 +1961,8 @@ def _clean_and_validate_fields(info):
     # Process invoice number (already FS-safe alnum; do not titlecase — IDs keep case)
     invoice_number = _normalize_invoice_number(info.get('invoice_number'))
 
-    # Process patient/animal name
     patient_animal_name = clean_filename(info.get('patient_animal_name')) if info.get('patient_animal_name') else None
 
-    # Process account type
     account_type = clean_filename(info.get('account_type')) if info.get('account_type') else None
 
     # Process account identifier (last 4 digits or short alphanumeric — low PII).
@@ -2097,7 +2075,6 @@ def _build_filename_parts(fields, file_ext):
     Grammar: Vendor [AccountType] Topic [AccountId] [- Party] [RefId] Date.ext
     USDF scorecards use a separate path when usdf_test_name is set.
     """
-    # Always use lowercase extensions (.pdf, .jpg, etc.)
     file_ext = (file_ext or '').lower()
     if file_ext and not file_ext.startswith('.'):
         file_ext = f'.{file_ext}'
@@ -2168,30 +2145,23 @@ def _handle_duplicate_filename(target_dir, new_filename, file_path, invoice_date
     counter = 2
     max_attempts = 100
     while os.path.exists(new_file_path) and os.path.abspath(new_file_path) != os.path.abspath(file_path):
-        # Safety check at start of loop to prevent infinite iterations
         if counter > max_attempts:
             logger.error(f"Too many duplicate files (checked {max_attempts} variations), giving up")
             print("Error: Too many files with similar names exist", file=sys.stderr)
             return None
 
-        # Extract parts to insert counter before date
         base_name = os.path.splitext(new_filename)[0]
 
         # If there's a valid date in the original filename construction, it should be at the end
-        # Check if the filename was constructed with a date originally
         original_had_date = invoice_date and invoice_date != "00000000"
 
         if original_had_date and base_name.endswith(invoice_date):
-            # Remove the date from the end
             name_without_date = base_name[:-len(invoice_date)].rstrip()
-            # Add counter and date back
             unique_filename = f"{name_without_date} {counter} {invoice_date}{file_ext}"
         elif original_had_date:
             # Original construction had date, but it's not at the end for some reason
-            # Add counter before what should be the date position
             unique_filename = f"{base_name} {counter}{file_ext}"
         else:
-            # No date at end, just append counter at the end
             unique_filename = f"{base_name} {counter}{file_ext}"
 
         new_file_path = os.path.join(target_dir, unique_filename)
@@ -2209,11 +2179,9 @@ def _handle_case_only_rename(file_path, new_file_path, move_to, target_dir):
     logger.info("Performing case-only rename")
     temp_path = None
     try:
-        # Create unique temporary name based on original filename and timestamp
         file_base = os.path.splitext(file_path)[0]
         file_ext = os.path.splitext(file_path)[1]
 
-        # Create a hash from the original and target paths for uniqueness
         # MD5 is not used for security here, just for generating a unique filename
         unique_hash = hashlib.md5(f"{file_path}->{new_file_path}".encode(), usedforsecurity=False).hexdigest()[:8]  # nosec B324
         temp_path = f"{file_base}.tmp_{unique_hash}{file_ext}"
@@ -2253,7 +2221,6 @@ def _execute_rename(file_path, new_file_path, move_to, target_dir):
     target_filename = os.path.basename(new_file_path)
     file_dir = os.path.dirname(file_path)
 
-    # Check if target file already exists
     if os.path.exists(new_file_path):
         # Do case-sensitive filename comparison
         if current_filename == target_filename:
@@ -2318,7 +2285,6 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     except ImportError:
         pass
 
-    # Validate file exists
     if not os.path.exists(file_path):
         logger.error(f"File not found: {file_path}")
         print(f"Error: File '{file_path}' not found", file=sys.stderr)
@@ -2376,7 +2342,6 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
             )
             fields['invoice_date'] = today
 
-    # Log extracted fields
     logger.info(f"Extracted business name: {fields['business_name']}")
     logger.info(f"Extracted document type: {fields['document_type']}")
     if fields.get('document_title'):
@@ -2401,10 +2366,8 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
     file_dir = os.path.dirname(file_path)
     output_ext = '.pdf' if needs_conversion else os.path.splitext(file_path)[1].lower()
 
-    # Build filename
     new_filename, invoice_date = _build_filename_parts(fields, output_ext)
 
-    # Determine target directory
     target_dir = move_to if move_to else file_dir
     if move_to and not os.path.exists(move_to):
         if dry_run:
@@ -2421,12 +2384,11 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
                 os.unlink(temp_pdf_path)
             except OSError:
                 pass
-        return False  # Too many duplicates
+        return False
 
     new_filename = os.path.basename(new_file_path)
     logger.info(f"New filename: {new_filename}")
 
-    # Handle dry run mode
     if dry_run:
         logger.info("Dry run mode - file not actually renamed")
         if temp_pdf_path and os.path.exists(temp_pdf_path):
@@ -2462,7 +2424,6 @@ def rename_invoice(file_path, dry_run=False, move_to=None, all_pages=False):
 
 
 def main():
-    # Setup logging first
     logger = setup_logging()
     logger.info("=== Invoice Renamer Started ===")
 
