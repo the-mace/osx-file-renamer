@@ -4,7 +4,6 @@ import base64
 import subprocess
 from unittest.mock import patch, MagicMock
 
-# Import the functions to test from llm_client.py
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -31,7 +30,6 @@ class TestProcessImageFile:
         assert result["image_url"]["url"].startswith("data:image/jpeg;base64,")
         assert result["image_url"]["detail"] == "high"
 
-        # Verify base64 encoding
         base64_part = result["image_url"]["url"].split(",")[1]
         decoded = base64.b64decode(base64_part)
         assert decoded == sample_jpeg_data
@@ -44,16 +42,13 @@ class TestProcessImageFile:
         image_file = tmp_path / "large.jpg"
         image_file.write_bytes(large_data)
 
-        # Mock compression to return smaller data
         mock_compress.return_value = sample_jpeg_data
 
         result = process_image_file(str(image_file))
 
-        # Verify compression was called with correct parameters
         mock_compress.assert_called_once_with(str(image_file), large_data, MAX_RAW_SIZE)
         assert result["type"] == "image_url"
 
-        # Verify the result uses the compressed data
         base64_part = result["image_url"]["url"].split(",")[1]
         decoded = base64.b64decode(base64_part)
         assert decoded == sample_jpeg_data
@@ -80,12 +75,10 @@ class TestProcessImageFile:
     @patch('llm_client.compress_image')
     def test_process_image_file_compression_fails_exits(self, mock_compress, tmp_path, sample_jpeg_data):
         """Test that failed compression followed by oversized image exits."""
-        # Create oversized data
         large_data = sample_jpeg_data * (MAX_RAW_SIZE // len(sample_jpeg_data) + 1000)
         image_file = tmp_path / "large.jpg"
         image_file.write_bytes(large_data)
 
-        # Mock compression returns None (failure)
         mock_compress.return_value = None
 
         with pytest.raises(SystemExit) as excinfo:
@@ -112,7 +105,6 @@ class TestProcessImageFile:
 class TestCompressImage:
 
     def test_compress_image_failure_returns_none(self):
-        """Test that compression failure returns None."""
         result = compress_image("nonexistent.jpg", b"data", 1000)
         assert result is None
 
@@ -121,18 +113,14 @@ class TestCompressImage:
     @patch('os.path.exists')
     def test_compress_image_png_to_jpeg_success(self, mock_exists, mock_tempfile, mock_run, sample_jpeg_data):
         """Test successful PNG to JPEG compression."""
-        # Create a smaller compressed version
         compressed_data = sample_jpeg_data[:len(sample_jpeg_data) // 2]
 
-        # Mock temporary file
         mock_temp = MagicMock()
         mock_temp.name = '/tmp/test.jpg'
         mock_tempfile.return_value.__enter__.return_value = mock_temp
 
-        # Mock subprocess success
         mock_run.return_value = MagicMock(returncode=0)
 
-        # Mock file operations
         def exists_side_effect(path):
             return path == '/tmp/test.jpg'
         mock_exists.side_effect = exists_side_effect
@@ -146,7 +134,6 @@ class TestCompressImage:
                 result = compress_image("test.png", b"large_data", 1000)
 
         assert result == compressed_data
-        # Verify ImageMagick convert was called
         assert mock_run.called
         call_args = mock_run.call_args[0][0]
         assert call_args[0] == 'convert'
@@ -246,7 +233,6 @@ class TestCompressImage:
     @patch('tempfile.NamedTemporaryFile')
     @patch('os.path.exists', return_value=False)
     def test_compress_image_temp_file_not_created(self, mock_exists, mock_tempfile, mock_run):
-        """Test handling when temporary file is not created."""
         mock_temp = MagicMock()
         mock_temp.name = '/tmp/test.jpg'
         mock_tempfile.return_value.__enter__.return_value = mock_temp
@@ -261,7 +247,6 @@ class TestCompressImage:
     @patch('tempfile.NamedTemporaryFile')
     @patch('os.path.exists')
     def test_compress_image_tries_multiple_quality_levels(self, mock_exists, mock_tempfile, mock_run, sample_jpeg_data):
-        """Test that compression tries multiple quality levels."""
         # All attempts fail to get small enough
         mock_temp = MagicMock()
         mock_temp.name = '/tmp/test.jpg'
@@ -279,9 +264,7 @@ class TestCompressImage:
             with patch('os.unlink'):
                 result = compress_image("test.png", sample_jpeg_data, 100)  # Very small limit
 
-        # Should return None after all attempts fail
         assert result is None
-        # Verify multiple quality levels were tried
         assert mock_run.call_count > 1
 
 
@@ -299,7 +282,6 @@ class TestReadFileContent:
         assert result["content"] == test_content
 
     def test_read_file_content_nonexistent_file(self):
-        """Test handling of nonexistent files."""
         with pytest.raises(SystemExit):
             read_file_content("nonexistent.xyz")
 
@@ -309,7 +291,6 @@ class TestReadFileContent:
         """Test PDF processing with text extraction."""
         pdf_file = tmp_path / "test.pdf"
 
-        # Mock pdftotext command
         mock_run.return_value = MagicMock(returncode=0, stdout="PDF content here")
 
         result = read_file_content(str(pdf_file))
@@ -336,7 +317,6 @@ class TestReadFileContent:
             with patch('os.path.exists', return_value=True):
                 result = read_file_content(str(pdf_file))
 
-                # Should return the image when conversion succeeds
                 assert result["type"] == "image_url"
                 mock_convert.assert_called_once_with(str(pdf_file), max_pages=2)
 
@@ -357,7 +337,6 @@ class TestReadFileContent:
             mock_process.assert_called_once()
 
     def test_read_file_content_binary_unsupported(self, tmp_path):
-        """Test handling of unsupported binary files."""
         bin_file = tmp_path / "test.bin"
         bin_file.write_bytes(b"binary data here")
 
@@ -374,17 +353,13 @@ class TestExtractEmbeddedImages:
     @patch('llm_client.process_image_file')
     def test_extract_embedded_images_single_image_success(self, mock_process, mock_glob, mock_exists, mock_run, tmp_path):
         """Test successful extraction of a single embedded image."""
-        # Mock pdfimages found
         mock_exists.return_value = True
 
-        # Mock successful extraction
         mock_run.return_value = MagicMock(returncode=0, stderr="")
 
-        # Mock extracted file
         extracted_file = str(tmp_path / "extracted-000.jpg")
         mock_glob.return_value = [extracted_file]
 
-        # Mock process_image_file
         mock_process.return_value = {
             "type": "image_url",
             "image_url": {"url": "data:image/jpeg;base64,test"}
@@ -414,7 +389,6 @@ class TestExtractEmbeddedImages:
         mock_exists.return_value = True
         mock_run.return_value = MagicMock(returncode=0)
 
-        # Mock multiple extracted files
         files = [str(tmp_path / f"extracted-00{i}.jpg") for i in range(3)]
         mock_glob.return_value = files
 
@@ -439,11 +413,8 @@ class TestExtractEmbeddedImages:
     @patch('subprocess.run')
     @patch('os.path.exists')
     def test_extract_embedded_images_pdfimages_not_found(self, mock_exists, mock_run):
-        """Test handling when pdfimages is not installed."""
-        # Mock pdfimages not found in common locations
         mock_exists.return_value = False
 
-        # Mock 'which' command failing
         mock_run.side_effect = subprocess.CalledProcessError(1, 'which')
 
         result = extract_embedded_images("test.pdf")
@@ -485,7 +456,6 @@ class TestExtractEmbeddedImages:
     @patch('subprocess.run')
     @patch('os.path.exists')
     def test_extract_embedded_images_timeout(self, mock_exists, mock_run):
-        """Test handling of pdfimages timeout."""
         mock_exists.return_value = True
         mock_run.side_effect = subprocess.TimeoutExpired('pdfimages', 15)
 
@@ -504,7 +474,6 @@ class TestExtractEmbeddedImages:
         """Test PBM conversion fallback to ImageMagick when PIL not available."""
         mock_exists.return_value = True
 
-        # Mock pdfimages extraction success
         def run_side_effect(*args, **kwargs):
             cmd = args[0][0] if args else ""
             if 'pdfimages' in str(cmd):
@@ -529,7 +498,6 @@ class TestExtractEmbeddedImages:
 
                 result = extract_embedded_images("test.pdf")
 
-        # Should still succeed with ImageMagick fallback
         assert result is not None
 
 
@@ -540,13 +508,10 @@ class TestConvertPdfToImages:
     @patch('os.unlink')
     def test_convert_pdf_to_images_single_page(self, mock_unlink, mock_exists, mock_run, tmp_path, sample_jpeg_data):
         """Test converting a single page PDF to image."""
-        # Mock pdftoppm found
         mock_exists.return_value = True
 
-        # Mock successful conversion
         mock_run.return_value = MagicMock(returncode=0)
 
-        # Create mock generated image
         temp_image = str(tmp_path / "temp-1.jpg")
         with open(temp_image, 'wb') as f:
             f.write(sample_jpeg_data)
@@ -572,7 +537,6 @@ class TestConvertPdfToImages:
         assert "image_url" in result
         assert result["image_url"]["detail"] == "high"
 
-        # Verify pdftoppm was called with correct arguments
         call_args = mock_run.call_args[0][0]
         assert '-jpeg' in call_args
         assert '-r' in call_args
@@ -584,11 +548,9 @@ class TestConvertPdfToImages:
     @patch('os.path.exists')
     @patch('os.unlink')
     def test_convert_pdf_to_images_multiple_pages(self, mock_unlink, mock_exists, mock_run, tmp_path, sample_jpeg_data):
-        """Test converting multiple pages to images."""
         mock_exists.return_value = True
         mock_run.return_value = MagicMock(returncode=0)
 
-        # Create mock generated images for 3 pages
         temp_images = [str(tmp_path / f"temp-{i}.jpg") for i in range(1, 4)]
         for img_path in temp_images:
             with open(img_path, 'wb') as f:
@@ -617,8 +579,6 @@ class TestConvertPdfToImages:
     @patch('subprocess.run')
     @patch('os.path.exists')
     def test_convert_pdf_to_images_pdftoppm_not_found(self, mock_exists, mock_run):
-        """Test handling when pdftoppm is not installed."""
-        # Mock pdftoppm not found
         mock_exists.return_value = False
         mock_run.side_effect = subprocess.CalledProcessError(1, 'which')
 
@@ -634,7 +594,6 @@ class TestConvertPdfToImages:
     @patch('subprocess.run')
     @patch('os.path.exists')
     def test_convert_pdf_to_images_timeout(self, mock_exists, mock_run):
-        """Test handling of pdftoppm timeout."""
         mock_exists.return_value = True
         mock_run.side_effect = subprocess.TimeoutExpired('pdftoppm', 60)
 
@@ -644,7 +603,6 @@ class TestConvertPdfToImages:
     @patch('subprocess.run')
     @patch('os.path.exists')
     def test_convert_pdf_to_images_conversion_fails(self, mock_exists, mock_run):
-        """Test handling of conversion failure."""
         mock_exists.return_value = True
         mock_run.side_effect = subprocess.CalledProcessError(1, 'pdftoppm', stderr="Error")
 
@@ -654,7 +612,6 @@ class TestConvertPdfToImages:
     @patch('subprocess.run')
     @patch('os.path.exists')
     def test_convert_pdf_to_images_no_images_generated(self, mock_exists, mock_run, tmp_path):
-        """Test handling when no images are generated."""
         # Mock successful pdftoppm run but no images created
         def run_side_effect(*args, **kwargs):
             return MagicMock(returncode=0)
@@ -715,6 +672,5 @@ class TestConvertPdfToImages:
 
                 result = convert_pdf_to_images("test.pdf", max_pages=1)
 
-        # Should succeed with compression
         assert result is not None
         mock_compress.assert_called_once()

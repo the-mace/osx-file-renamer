@@ -4,19 +4,15 @@ import json
 from datetime import datetime
 from unittest.mock import patch
 
-# Import the functions to test from invoice_renamer.py
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from invoice_renamer import clean_filename, format_date, extract_invoice_info
 
 
-# ==================== UTILITY FUNCTION TESTS ====================
-
 class TestCleanFilenameEdgeCases:
     """Test edge cases for clean_filename function."""
 
     def test_clean_filename_unicode_characters(self):
-        """Test handling of unicode characters."""
         result = clean_filename("Café René")
         assert result == "Café René"
 
@@ -37,23 +33,19 @@ class TestCleanFilenameEdgeCases:
         assert len(result) <= 50
 
     def test_clean_filename_removes_trailing_business_terms(self):
-        """Test removal of trailing business terms."""
         result = clean_filename("Test Company Inc", limit_words=2)
         # Takes first 2 words "Test Company", then removes trailing "Company"
         assert result == "Test"
 
     def test_clean_filename_removes_multiple_trailing_words(self):
-        """Test removal of multiple trailing words."""
         result = clean_filename("Company Name LLC Corporation", limit_words=3)
         assert result == "Company Name"
 
     def test_clean_filename_mixed_case_acronyms(self):
-        """Test preservation of acronyms."""
         result = clean_filename("IBM")
         assert result == "IBM"  # Short, stays uppercase
 
     def test_clean_filename_multiple_spaces_normalized(self):
-        """Test multiple spaces get normalized."""
         result = clean_filename("Test    Company   Name")
         assert "    " not in result
         assert result == "Test Company Name"
@@ -103,7 +95,6 @@ class TestFormatDateEdgeCases:
         assert result == "20240101"
 
     def test_format_date_year_1900(self):
-        """Test year 1900 boundary."""
         result = format_date("1900-01-01")
         assert result == "19000101"
 
@@ -187,7 +178,6 @@ class TestExtractInvoiceInfoEdgeCases:
 
     @patch('invoice_renamer.call_llm_api')
     def test_extract_invoice_info_missing_document_type_fallback(self, mock_call_api):
-        """Test fallback when document_type is missing."""
         json_response = {
             "business_name": "Test Co",
             "document_type": None,

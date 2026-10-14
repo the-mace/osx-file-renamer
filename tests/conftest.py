@@ -55,7 +55,6 @@ def temp_file_cleanup():
 
     yield track_file
 
-    # Cleanup
     for filepath in created_files:
         try:
             if os.path.exists(filepath):
@@ -70,7 +69,6 @@ def mock_env_file(tmp_path):
     env_file = tmp_path / ".env"
     env_file.write_text('GROK_API_KEY=test_api_key_here\nexport OTHER_VAR=value\n')
 
-    # Mock expanduser to point to our test directory
     original_expanduser = os.path.expanduser
 
     def mock_expanduser(path):

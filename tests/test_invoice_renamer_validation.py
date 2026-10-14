@@ -2,13 +2,10 @@ import os
 import sys
 from unittest.mock import patch
 
-# Import the functions to test from invoice_renamer.py
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from invoice_renamer import rename_invoice
 
-
-# ==================== VALIDATION TESTS ====================
 
 class TestRenameInvoiceDocumentTypeSanitization:
     """Test document type-specific sanitization rules."""
@@ -318,7 +315,6 @@ class TestRenameInvoiceAccountNumberValidation:
 
     @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_valid_4_digit_account(self, mock_extract, tmp_path):
-        """Test valid 4-digit account number."""
         test_file = tmp_path / "test.pdf"
         test_file.write_text("test content")
 
@@ -359,7 +355,6 @@ class TestRenameInvoiceAccountNumberValidation:
         result = rename_invoice(str(test_file))
 
         assert result is True
-        # Should take last 4: 7890
         expected = tmp_path / "Bank Checking Statement 7890 20240115.pdf"
         assert expected.exists()
 
@@ -407,7 +402,6 @@ class TestRenameInvoiceAccountNumberValidation:
         result = rename_invoice(str(test_file))
 
         assert result is True
-        # Should extract just digits: 1234
         expected = tmp_path / "Bank Savings Statement 1234 20240115.pdf"
         assert expected.exists()
 
