@@ -210,7 +210,8 @@ python3 ~/Documents/Code/osx-file-renamer/invoice_renamer.py "$@" --dry-run
 
 ## Naming Convention
 
-The LLM extracts **facts**. On a text PDF, document-family extractors read labeled lines (policy, account number, statement date, service location, patient names) and those values win. Python builds the filename with a fixed grammar. Completions use temperature 0 so the same issuer keeps one vendor string.
+The LLM extracts **facts**. On a text PDF, document-family extractors read labeled lines (policy, account number, statement date, service location, patient names) and those values win.
+Python builds the filename with a fixed grammar. Completions use temperature 0 so the same issuer keeps one vendor string.
 
 ```
 Vendor [AccountType] Topic [AccountId] [- Party] [RefId] Date.ext
@@ -280,7 +281,7 @@ Default path is optimized for short names and moderate latency:
 - A failed API call is retried up to 3 times with exponential backoff (1s, 2s, 4s); bad-key and bad-request errors fail at once. The final error is written to the log
 - Fast non-reasoning model by default; override with `LLM_MODEL` if needed
 
-If you need it **faster or cheaper** later (e.g. local Tesseract for clean scans, path timing logs, cheaper vision models), see **Future Optimizations** in [`AGENTS.md`](AGENTS.md).
+If you need it **faster or cheaper** later (e.g. local Tesseract for clean scans, path timing logs, cheaper vision models), see [`docs/future-optimizations.md`](docs/future-optimizations.md).
 
 ## Troubleshooting
 
@@ -430,6 +431,8 @@ cat .flake8
 osx-file-renamer/
 ├── invoice_renamer.py      # Main application logic
 ├── llm_client.py           # LLM API client (supports multiple providers via LiteLLM)
+├── document_families.py    # Labeled-line parsers for text PDFs
+├── docs/                   # Architecture and speed/cost notes (not loaded every agent turn)
 ├── tests/                  # Test suite
 │   ├── test_llm_*.py      # LLM client tests
 │   ├── test_invoice_*.py  # Invoice renamer tests

@@ -236,7 +236,7 @@ Then open a Pull Request on GitHub.
 5. **Documentation**
    - Add docstrings to public functions
    - Explain "why" not just "what" in comments
-   - Update AGENTS.md if architecture changes
+   - Update docs/architecture.md if architecture changes, and AGENTS.md if a naming invariant or a gate changes
 
    ```python
    def extract_invoice_info(file_path: str, all_pages: bool = False) -> dict:
@@ -388,7 +388,7 @@ WIP             # Don't commit work-in-progress to main
 1. ✅ All tests pass: `pyenv exec pytest`
 2. ✅ No linting errors: `pyenv exec flake8`
 3. ✅ Code is documented
-4. ✅ AGENTS.md updated if architecture changed
+4. ✅ docs/architecture.md updated if architecture changed; AGENTS.md updated if a naming invariant or a gate changed
 5. ✅ No unnecessary files committed (check .gitignore)
 
 ### PR Description Template
