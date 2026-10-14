@@ -245,6 +245,14 @@ _PREMISE_STYLE_RE = re.compile(
     r'^(?:apt|apartment|unit|ste|suite|bldg|building|fl|floor|rm|room)\s*[#.]?\s*[a-z0-9-]{1,6}$',
     re.IGNORECASE,
 )
+# "Apt" with no unit code. Not a premise (that is "Apt 2B") and not a subject.
+# Left behind when a hex-shaped unit code (102B, 2B) was stripped as a hash fragment.
+_BARE_UNIT_WORD_RE = re.compile(r'^(?:apt|ste|fl|floor|rm|room)$', re.IGNORECASE)
+_UNIT_DESIGNATOR_WORDS = frozenset({
+    'apt', 'apartment', 'unit', 'ste', 'suite', 'bldg', 'building',
+    'fl', 'floor', 'rm', 'room',
+})
+_UNIT_CODE_RE = re.compile(r'^[A-Za-z0-9-]{1,6}$')
 # Banks, cards, brokerages, tolls, transit — never multi-premise utility naming
 _NO_PREMISE_VENDOR_RE = re.compile(
     r'(?:'
@@ -333,6 +341,19 @@ def _has_random_token_shape(dense):
         return False
     wordlike = sum(len(run) for run in _FILENAME_WORDLIKE_LOWER_RUN_RE.findall(dense))
     return wordlike / letters < _FILENAME_OPAQUE_MAX_WORDLIKE_FRACTION
+
+
+def _is_unit_code_token(word, previous):
+    """True for the code in a premise label (Apt 102B), not a hash fragment.
+
+    Unit codes are often hex-shaped (2B, 102B). They must survive the
+    pure-hex strip that drops download-token leftovers (dcd, cdfd).
+    """
+    if not word or not previous:
+        return False
+    if str(previous).lower() not in _UNIT_DESIGNATOR_WORDS:
+        return False
+    return _UNIT_CODE_RE.fullmatch(word) is not None
 
 
 def _is_opaque_topic_token(word):
@@ -1270,20 +1291,39 @@ def _apply_receipt_family(info, full_text):
     return True
 
 
+def _clear_qualifier(info):
+    """Drop document_title and the qualifier alias."""
+    info['document_title'] = None
+    if 'qualifier' in info:
+        info['qualifier'] = None
+
+
 def _apply_utility_family(info, full_text):
-    """A labeled service location becomes the topic when it is a premise name."""
+    """A labeled service location becomes the topic when it is a premise name.
+
+    Words copied from a postal service address (Apt, Apt 102B, Gulf Blvd)
+    are not a premise. A labeled location such as Barn or Apt 2B still is.
+    """
+    logger = logging.getLogger(__name__)
+    cleared = False
+    address = document_families.service_address_block(full_text)
+    title = _raw_qualifier(info)
+    if address and document_families.title_repeats_service_address(title, address):
+        logger.info(f"Document family utility: dropped service-address fragment {title!r}")
+        _clear_qualifier(info)
+        cleared = True
     if _raw_qualifier(info):
-        return False
+        return cleared
     if _vendor_blocks_premise_label(info.get('business_name')):
-        return False
+        return cleared
     account_type = info.get('account_type')
     if account_type and str(account_type).strip().lower() in _BANK_STYLE_ACCOUNT_TYPES:
-        return False
+        return cleared
     label = document_families.service_location_label(full_text)
     if not label or not _is_premise_style_qualifier(label):
-        return False
+        return cleared
     info['document_title'] = label
-    logging.getLogger(__name__).info(f"Document family utility: service location {label!r}")
+    logger.info(f"Document family utility: service location {label!r}")
     return True
 
 
@@ -1647,6 +1687,14 @@ def _vendor_blocks_premise_label(business_name):
     return bool(_NO_PREMISE_VENDOR_RE.search(str(business_name)))
 
 
+def _should_drop_bare_unit_word(info):
+    """True when the qualifier is only "Apt" / "Room" with no unit code."""
+    title = _raw_qualifier(info)
+    if not title:
+        return False
+    return _BARE_UNIT_WORD_RE.fullmatch(str(title).strip()) is not None
+
+
 def _should_drop_premise_qualifier(info):
     """Drop hallucinated premise labels outside multi-service utility/telecom context.
 
@@ -1842,10 +1890,15 @@ def _strip_opaque_qualifier_tokens(info):
     if not title:
         return info
     words = title.split()
-    kept = [
-        w for w in words
-        if not _is_pure_hex_token(w) and not _is_opaque_topic_token(w)
-    ]
+    kept = []
+    for word in words:
+        previous = kept[-1] if kept else None
+        if _is_unit_code_token(word, previous):
+            kept.append(word)
+            continue
+        if _is_pure_hex_token(word) or _is_opaque_topic_token(word):
+            continue
+        kept.append(word)
     if kept == words:
         return info
 
@@ -1906,6 +1959,12 @@ def _sanitize_document_fields(info):
             f"Dropped premise-style document_title {dropped!r} "
             f"(vendor={info.get('business_name')!r}, account_type={info.get('account_type')!r})"
         )
+
+    # "Apt" alone is an address fragment, including for utilities. "Apt 2B" stays.
+    if _should_drop_bare_unit_word(info):
+        dropped = _raw_qualifier(info)
+        _clear_qualifier(info)
+        logger.info(f"Dropped bare unit document_title {dropped!r}")
 
     # Party slot: single named patient/animal only
     _normalize_patient_animal_name(info)

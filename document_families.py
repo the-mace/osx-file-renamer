@@ -140,6 +140,23 @@ SERVICE_LOCATION_RE = re.compile(
     r'(?i)\b(?:service\s+location|premise(?:\s+(?:id|name))?|'
     r'meter\s+(?:location|site)|service\s+address)\b'
 )
+# Postal service address (Duke Energy and similar). A unit on that street
+# is not a named premise. "Service Location: Barn" stays on SERVICE_LOCATION_RE.
+SERVICE_ADDRESS_RE = re.compile(r'(?i)\bservice\s+address\b')
+# Same-line text that is the next column's label, not the address.
+_SERVICE_ADDRESS_NEXT_LABEL_RE = re.compile(
+    r'(?i)^(?:bill\s+date|due\s+date|for\s+service|account\s*(?:number|no)|'
+    r'invoice\s+date|statement\s+date)\b'
+)
+# Stop walking once the address block ends and the bill body starts.
+_SERVICE_ADDRESS_STOP_RE = re.compile(
+    r'(?i)^(?:account\s*(?:number|no\.?|#)|billing\b|page\b|your\s+|amount\s+due|total\s+)\b'
+)
+_STREET_SUFFIX_RE = re.compile(
+    r'(?i)\b(?:street|avenue|boulevard|drive|lane|court|place|circle|terrace|'
+    r'highway|parkway|blvd|ave|rd|st|dr|ln|ct|pl|cir|ter|hwy|pkwy|way|road)\b'
+)
+_SERVICE_ADDRESS_MAX_LINES = 4
 
 UUID_RE = re.compile(
     r'(?i)\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
@@ -603,6 +620,68 @@ def is_standalone_receipt(text):
     if BILL_SIGNAL_RE.search(text):
         return False
     return RECEIPT_HEADING_RE.search(text) is not None
+
+
+def _first_column(line):
+    """Text before a wide column gap. Blank lines return ''."""
+    stripped = (line or '').strip()
+    if not stripped:
+        return ''
+    return re.split(r'\s{2,}', stripped, maxsplit=1)[0].strip()
+
+
+def _looks_like_street_address(text):
+    """True when text contains a street suffix (Blvd, St, Road)."""
+    if not text:
+        return False
+    return _STREET_SUFFIX_RE.search(text) is not None
+
+
+def service_address_block(text):
+    """Postal lines under a Service Address label, or None.
+
+    Unlike service_location_label, this is a street. A unit inside it
+    (Apt 102B) is not a named premise. Two-column bills keep the next
+    column (Bill date, For service) out of the block.
+    """
+    if not text:
+        return None
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        match = SERVICE_ADDRESS_RE.search(line)
+        if not match:
+            continue
+        collected = []
+        rest = _first_column(line[match.end():])
+        if rest and not _SERVICE_ADDRESS_NEXT_LABEL_RE.match(rest):
+            collected.append(rest)
+        for follow in lines[index + 1:index + 6]:
+            left = _first_column(follow)
+            if not left:
+                continue
+            if _SERVICE_ADDRESS_STOP_RE.match(left):
+                break
+            collected.append(left)
+            if len(collected) >= _SERVICE_ADDRESS_MAX_LINES:
+                break
+        block = ' '.join(collected)
+        if _looks_like_street_address(block):
+            return block
+    return None
+
+
+def title_repeats_service_address(title, address):
+    """True when every word of title is already in the postal service address.
+
+    "Apt", "Apt 102B", and "Gulf Blvd" repeat the street. "Barn" does not.
+    """
+    if not title or not address:
+        return False
+    words = re.findall(r'[A-Za-z0-9]+', str(title))
+    if not words or len(words) > 5:
+        return False
+    address_words = {word.lower() for word in re.findall(r'[A-Za-z0-9]+', address)}
+    return all(word.lower() in address_words for word in words)
 
 
 def service_location_label(text):

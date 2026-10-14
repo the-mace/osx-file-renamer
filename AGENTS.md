@@ -148,6 +148,8 @@ make lint
    - `document_title` is an optional **qualifier** (premise, subtype, form name), not the full filename
    - Topic policy is in `_select_display_topic`: subtype types keep `{qualifier} {type}` (e.g. Trade Confirmation); otherwise qualifier replaces type (e.g. Barn)
    - Premise-style labels (Barn, Cogen, Apt 2B) are dropped for banks/tolls/transit via `_should_drop_premise_qualifier` so mailing addresses cannot invent multi-premise topics
+   - A postal service address is not a premise. A qualifier made only of words from that address (Apt, Apt 102B, Gulf Blvd) is dropped so the bill stays Invoice plus the account last-4
+   - A labeled service location (Barn, Apt 2B) still replaces the type. A bare "Apt" with no unit code is never a topic. Hex-shaped unit codes (2B, 102B) are not hash fragments
    - Short vendors (Amex, BofA, Chase); account id last-4 / short alnum (low PII); lowercase extensions
    - Hyphenated brokerage `AAA-BBBBB-C-D` uses last 4 of the 5-digit body (609-92865-1-7 → 2865)
    - Portfolio overviews keep a primary-account last-4 when known
@@ -245,6 +247,7 @@ If renames still feel slow or vision API cost becomes an issue, consider these i
 - Insurance: `document_families` copies the labeled POLICY line (Workers Compensation, or "NJ Auto 7101" → Auto). The policy-line id is the account id; a bank account being debited is not the account id
 - Party is a single named patient/animal; omit when 2+ animals have charges
 - Portal invoice-id download names are not titles
+- A unit inside a service street address is not a premise (Duke Energy Invoice plus last-4). A labeled service location (Barn, Apt 2B) still replaces the type. Bare "Apt" is never a topic
 - Priority fields: Vendor → Topic → AccountId → Date
 - Lowercase extensions always
 

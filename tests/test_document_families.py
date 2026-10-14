@@ -111,6 +111,71 @@ class TestDocumentFamilyGoldens:
         }
         assert _filename(info, _load('national_grid_barn.txt')) == 'National Grid Barn 5018 20260729.pdf'
 
+    @pytest.mark.parametrize('title', ['Apt', 'Apt 102B', 'Main Blvd'])
+    def test_duke_service_address_unit_is_not_a_premise(self, title):
+        """A unit on the service street is not a premise. Keep Invoice + last-4."""
+        info = {
+            'business_name': 'Duke Energy',
+            'document_type': 'Invoice',
+            'document_title': title,
+            'invoice_date': '2026-10-14',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '7715',
+        }
+        assert _filename(info, _load('duke_energy_bill.txt')) == (
+            'Duke Energy Invoice 7715 20261014.pdf'
+        )
+
+    def test_labeled_unit_premise_keeps_hex_shaped_code(self):
+        """Service Location Apt 2B stays. The code is hex-shaped and must not be stripped."""
+        info = {
+            'business_name': 'National Grid',
+            'document_type': 'Statement',
+            'document_title': 'Apt 2B',
+            'invoice_date': '2026-07-29',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '5018',
+        }
+        text = "National Grid\nService Location: Apt 2B\nAccount Number: 12345018\n"
+        assert _filename(info, text) == 'National Grid Apt 2B 5018 20260729.pdf'
+
+    def test_bare_apt_word_is_not_a_topic(self):
+        info = {
+            'business_name': 'Duke Energy',
+            'document_type': 'Invoice',
+            'document_title': 'Apt',
+            'invoice_date': '2026-10-14',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '7715',
+        }
+        assert _filename(info, '') == 'Duke Energy Invoice 7715 20261014.pdf'
+
+    def test_wrong_filename_does_not_restore_bare_apt(self):
+        from invoice_renamer import (
+            _apply_filename_hint_fallback,
+            _original_filename_hint,
+        )
+
+        info = {
+            'business_name': 'Duke Energy',
+            'document_type': 'Invoice',
+            'document_title': None,
+            'invoice_date': '2026-10-14',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '7715',
+        }
+        hint = _original_filename_hint('Duke Energy Apt 7715 20261014.pdf')
+        _apply_filename_hint_fallback(info, hint)
+        assert not info.get('document_title')
+
     def test_multi_animal_vet_omits_party(self):
         info = {
             'business_name': 'Equine Therapies',
