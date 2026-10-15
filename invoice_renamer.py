@@ -516,8 +516,10 @@ def _topic_words_from_filename_hint(filename_hint, business_name=None, document_
         | set(_FILENAME_TYPE_SYNONYMS)
     )
     if business_name:
-        # Split on punctuation too: the hint splitter turns "Paddle.com" into "Paddle com"
-        drop |= {w.lower() for w in re.split(r'[^A-Za-z0-9]+', str(business_name)) if w}
+        # Split the vendor the way the hint was split: "Paddle.com" → Paddle com, "MultiPay" → Multi Pay
+        vendor = str(business_name)
+        drop |= {w.lower() for w in re.split(r'[^A-Za-z0-9]+', vendor) if w}
+        drop |= {w.lower() for w in _split_filename_tokens(vendor).split() if w}
     if document_type:
         drop |= {w.lower() for w in str(document_type).split() if w}
 

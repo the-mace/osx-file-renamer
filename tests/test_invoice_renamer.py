@@ -1248,6 +1248,39 @@ class TestRenameInvoiceConversion:
         filename, _ = _build_filename_parts(fields, '.pdf')
         assert filename == 'Paddle Receipt 20261015.pdf'
 
+    def test_filename_hint_fallback_ignores_camelcase_vendor(self):
+        from invoice_renamer import (
+            _original_filename_hint,
+            _apply_filename_hint_fallback,
+            _sanitize_document_fields,
+            _clean_and_validate_fields,
+            _build_filename_parts,
+        )
+
+        hint = _original_filename_hint('MultiPay.pdf')
+        assert hint == 'Multi Pay'
+
+        info = {
+            'business_name': 'MultiPay',
+            'document_type': 'Receipt',
+            'document_title': None,
+            'invoice_date': '2026-10-15',
+            'invoice_number': '1234567890',
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '1234',
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        _apply_filename_hint_fallback(info, hint)
+        assert info['document_title'] is None
+
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert 'Multi Pay' not in filename
+
     def test_vendor_domain_suffix_dropped(self):
         from invoice_renamer import _strip_vendor_domain
 
