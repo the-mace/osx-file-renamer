@@ -229,6 +229,7 @@ _FILENAME_SAFE_SINGLE_TOPICS = frozenset({
 _GENERIC_TITLE_WORDS = frozenset({
     'travel', 'document', 'documents', 'general', 'official', 'the', 'a', 'an',
     'and', 'of', 'for', 'to', 'in', 'at', 'by', 'with', 'from', 'on',
+    'your', 'my', 'our',
 })
 # Short service-location tokens used as document_title for multi-premise utilities.
 # Models sometimes invent these from a mailing address (or prompt leakage); code drops
@@ -307,10 +308,11 @@ def _strip_filename_date_tokens(name):
     """Remove leading/trailing date-like tokens commonly baked into downloads."""
     # Leading ISO / compact dates (Shortcuts, mail clients)
     name = re.sub(r'^\d{4}[-_]\d{2}[-_]\d{2}[_\-\s]*', '', name)
-    name = re.sub(r'^\d{8}[_\-\s]*', '', name)
-    # Trailing compact dates: MMDDYYYY, YYYYMMDD, MMDDYY, YYYYMMDD-ish 6–8 digits
-    name = re.sub(r'[\s_\-]*\d{8}$', '', name)
-    name = re.sub(r'[\s_\-]*\d{6}$', '', name)
+    name = re.sub(r'^\d{8}(?!\d)[_\-\s]*', '', name)
+    # Trailing compact dates: MMDDYYYY, YYYYMMDD, MMDDYY. The lookbehind keeps a longer
+    # order id (150457343) whole instead of leaving its first digit behind.
+    name = re.sub(r'[\s_\-]*(?<!\d)\d{8}$', '', name)
+    name = re.sub(r'[\s_\-]*(?<!\d)\d{6}$', '', name)
     # Trailing ISO date
     name = re.sub(r'[\s_\-]*\d{4}[-_]\d{2}[-_]\d{2}$', '', name)
     # Trailing MM-DD-YYYY / MM_DD_YYYY (mail/portal downloads)
@@ -512,7 +514,8 @@ def _topic_words_from_filename_hint(filename_hint, business_name=None, document_
         | set(_FILENAME_TYPE_SYNONYMS)
     )
     if business_name:
-        drop |= {w.lower() for w in str(business_name).split() if w}
+        # Split on punctuation too: the hint splitter turns "Paddle.com" into "Paddle com"
+        drop |= {w.lower() for w in re.split(r'[^A-Za-z0-9]+', str(business_name)) if w}
     if document_type:
         drop |= {w.lower() for w in str(document_type).split() if w}
 
@@ -521,7 +524,8 @@ def _topic_words_from_filename_hint(filename_hint, business_name=None, document_
         lower = word.lower()
         if lower in drop:
             continue
-        if re.fullmatch(r'\d+', word):
+        # Bare numbers and order/invoice refs (#75611661)
+        if re.fullmatch(r'#?\d+', word):
             continue
         if re.fullmatch(r'\d{4}[-_]\d{2}[-_]\d{2}', word):
             continue

@@ -1215,6 +1215,40 @@ class TestRenameInvoiceConversion:
         _apply_filename_hint_fallback(info2, 'IRS Tax Delinquent')
         assert info2['document_title'] == 'Tax Delinquent'
 
+    def test_filename_hint_fallback_ignores_domain_vendor_and_order_ref(self):
+        from invoice_renamer import (
+            _original_filename_hint,
+            _apply_filename_hint_fallback,
+            _sanitize_document_fields,
+            _clean_and_validate_fields,
+            _build_filename_parts,
+        )
+
+        hint = _original_filename_hint('Your Paddle.com Order #12345678-123456789.pdf')
+        assert hint == 'Your Paddle com Order #12345678 123456789'
+
+        info = {
+            'business_name': 'Paddle.com',
+            'document_type': 'Receipt',
+            'document_title': None,
+            'invoice_date': '2026-10-15',
+            'invoice_number': '12345678',
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+            'usdf_test_name': None,
+            'usdf_rider_number': None,
+            'usdf_rider_name': None,
+        }
+        _apply_filename_hint_fallback(info, hint)
+        assert info['document_title'] is None
+
+        _sanitize_document_fields(info)
+        fields = _clean_and_validate_fields(info)
+        filename, _ = _build_filename_parts(fields, '.pdf')
+        assert 'Your' not in filename
+        assert '#' not in filename
+
     def test_filename_hint_fallback_ignores_vendor_tracking_junk(self):
         """Download names like RavenInvoice30928720 must not invent a title.
 
