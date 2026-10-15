@@ -159,6 +159,8 @@ FILENAME_ABBREVIATIONS = [
     (re.compile(r'^Social Security Administration$', re.IGNORECASE), 'SSA'),
     (re.compile(r'^Internal Revenue Service$', re.IGNORECASE), 'IRS'),
 ]
+# Web-store vendors (Paddle.com, Amazon.com) keep the brand, not the domain
+_VENDOR_DOMAIN_SUFFIX_RE = re.compile(r'(?<=[A-Za-z0-9])\.(?:co\.uk|com|net|org|io|co|ai|app|us)\b', re.IGNORECASE)
 MAX_ACCOUNT_ID_LEN = document_families.MAX_ACCOUNT_ID_LEN
 # Filename ref slot is last-4 only (low PII); longer invoice/doc ids collapse the same way
 REF_ID_DISPLAY_LEN = 4
@@ -1527,6 +1529,13 @@ def _apply_filename_abbreviations(text):
     return text
 
 
+def _strip_vendor_domain(name):
+    """Drop a web-domain suffix from a vendor name (Paddle.com → Paddle)."""
+    if not name:
+        return name
+    return _VENDOR_DOMAIN_SUFFIX_RE.sub('', str(name)).strip()
+
+
 def clean_filename(text, limit_words=None):
     """Clean text to be safe for filename use and apply proper capitalization"""
     if not text:
@@ -1956,7 +1965,7 @@ def _sanitize_document_fields(info):
 
 def _clean_and_validate_fields(info):
     """Clean and validate individual fields from invoice info"""
-    business_name = clean_filename(info.get('business_name'), limit_words=4)
+    business_name = clean_filename(_strip_vendor_domain(info.get('business_name')), limit_words=4)
     document_type = clean_filename(info.get('document_type')) if info.get('document_type') else 'Document'
     raw_title = _raw_qualifier(info)
     document_title = clean_filename(raw_title, limit_words=5) if raw_title else None

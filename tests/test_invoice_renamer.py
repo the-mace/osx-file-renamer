@@ -1246,8 +1246,18 @@ class TestRenameInvoiceConversion:
         _sanitize_document_fields(info)
         fields = _clean_and_validate_fields(info)
         filename, _ = _build_filename_parts(fields, '.pdf')
-        assert 'Your' not in filename
-        assert '#' not in filename
+        assert filename == 'Paddle Receipt 20261015.pdf'
+
+    def test_vendor_domain_suffix_dropped(self):
+        from invoice_renamer import _strip_vendor_domain
+
+        assert _strip_vendor_domain('Paddle.com') == 'Paddle'
+        assert _strip_vendor_domain('Amazon.com Services') == 'Amazon Services'
+        assert _strip_vendor_domain('Example.co.uk') == 'Example'
+        assert _strip_vendor_domain('Linear.app') == 'Linear'
+        assert _strip_vendor_domain('Fidelity') == 'Fidelity'
+        assert _strip_vendor_domain('St. Joseph Hospital') == 'St. Joseph Hospital'
+        assert _strip_vendor_domain(None) is None
 
     def test_filename_hint_fallback_ignores_vendor_tracking_junk(self):
         """Download names like RavenInvoice30928720 must not invent a title.
