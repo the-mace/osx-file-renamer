@@ -13,6 +13,7 @@ import re
 from datetime import datetime
 
 MAX_ACCOUNT_ID_LEN = 8
+MIN_SHORT_NUMERIC_ACCOUNT_ID_LEN = 3
 # Edward Jones / similar: AAA-BBBBB-C-D — last-4 of the 5-digit body, not the check-digit tail
 BROKERAGE_HYPHEN_ACCOUNT_RE = re.compile(r'^(?:\d{2,4}-)?(\d{5})-\d(?:-\d)?$')
 YEAR_TOKEN_RE = re.compile(r'^(?:19|20)\d{2}$')
@@ -201,6 +202,9 @@ def account_last4(value):
     if len(digits) >= 4:
         return digits[-4:]
     if alnum.isdigit():
+        # A leading 0 is a zero-padded tail ("011"); the labeled Account Number fixes it.
+        if len(alnum) >= MIN_SHORT_NUMERIC_ACCOUNT_ID_LEN and not alnum.startswith('0'):
+            return alnum
         return None
     if len(alnum) > MAX_ACCOUNT_ID_LEN:
         return alnum[-4:]

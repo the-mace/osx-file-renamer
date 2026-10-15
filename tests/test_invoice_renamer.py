@@ -1378,6 +1378,14 @@ class TestRenameInvoiceConversion:
         assert 'patient_count' in base
         assert 'never just the first' in base
 
+    def test_build_extraction_prompt_store_charge_account_is_not_credit_card(self):
+        """Scanned store statements have no text layer, so only the prompt can stop the CC guess."""
+        from invoice_renamer import INVOICE_EXTRACTION_PROMPT
+
+        assert 'in-house charge account' in INVOICE_EXTRACTION_PROMPT
+        assert 'is not a Credit Card' in INVOICE_EXTRACTION_PROMPT
+        assert 'never zero-pad' in INVOICE_EXTRACTION_PROMPT
+
     def test_build_extraction_prompt_keeps_invoices_with_payment_lines(self):
         """Bills with due date stay Invoice; Receipt is only standalone proof of payment.
 
@@ -1775,6 +1783,8 @@ class TestAccountIdNormalization:
         assert _normalize_account_id('xx-1234') == '1234'
         assert _normalize_account_id('A12B') == 'A12B'
         assert _normalize_account_id('12') is None
+        assert _normalize_account_id('112') == '112'
+        assert _normalize_account_id('011') is None
         assert _normalize_account_id(None) is None
 
     def test_account_id_from_filename_hint_masked_and_isolated(self):

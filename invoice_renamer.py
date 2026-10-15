@@ -105,11 +105,12 @@ and overwrites those fields. Still return your best read. Do not invent a value 
    Checking, Savings, Money Market, CD, IRA, Investment, Credit Card (or Platinum/Gold if labeled as tier),
    Annuity, VUL, Life Insurance, Brokerage, 401k.
    Multi-account overview (2+ different account numbers) → "Portfolio".
-   null only for a fully generic unlabeled "Account".
+   null for a fully generic unlabeled "Account". A store or farm's in-house charge account
+   (Charge/Payment lines, aging buckets) is not a Credit Card → null unless a card is named.
 
 7. account_last_4 — last 4 digits or short alphanumeric id for a SINGLE account/card
    (also utility/telecom service accounts even when account_type is null).
-   Never full account numbers.
+   Never full account numbers. Copy a shorter id as printed (112 stays 112; never zero-pad).
 
 8. document_title — optional SHORT qualifier (not a full filename). Use when it adds meaning beyond type:
    - Confirmation subtype: Trade, Order, Booking, Reservation

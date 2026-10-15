@@ -257,6 +257,30 @@ class TestRenameInvoiceDocumentTypeSanitization:
         assert not (tmp_path / "EZDriveMA Barn 6996 20260803.pdf").exists()
 
     @patch('invoice_renamer.extract_invoice_info')
+    def test_rename_invoice_store_charge_account_keeps_short_id(
+        self, mock_extract, tmp_path
+    ):
+        """A scanned store statement with a printed 3-digit account number keeps it as printed."""
+        test_file = tmp_path / "20261015.pdf"
+        test_file.write_text("test content")
+
+        mock_extract.return_value = {
+            'business_name': 'Example Farm & Pet',
+            'document_type': 'Statement',
+            'document_title': None,
+            'invoice_date': '2026-10-01',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '112',
+        }
+
+        result = rename_invoice(str(test_file))
+
+        assert result is True
+        assert (tmp_path / "Example Farm & Pet Statement 112 20261001.pdf").exists()
+
+    @patch('invoice_renamer.extract_invoice_info')
     def test_rename_invoice_bank_drops_hallucinated_premise(
         self, mock_extract, tmp_path
     ):

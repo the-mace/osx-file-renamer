@@ -40,7 +40,7 @@ Python builds the filename. The model returns facts. On a text PDF, `document_fa
 - `document_title` is a qualifier (premise, subtype, form name), not the filename. Subtype types keep `{qualifier} {type}` (Trade Confirmation). Otherwise the qualifier replaces the type (Barn).
 - Premise-style labels are dropped for banks, tolls, and transit. A postal service address is not a premise. A qualifier made only of words from that address (Apt, Apt 102B, Gulf Blvd) is dropped.
 - A labeled service location (Barn, Apt 2B) still replaces the type. Bare "Apt" is never a topic. Hex-shaped unit codes (2B, 102B) are not hash fragments.
-- Short vendors (Amex, BofA, Chase). Account id is last-4 or a short alphanumeric. Lowercase extensions. Priority is Vendor, then Topic, then AccountId, then Date.
+- Short vendors (Amex, BofA, Chase). Account id is last-4, a short alphanumeric, or a printed 3-digit number (112). A leading-0 short id is a zero-padded tail. A store's in-house charge account is not a Credit Card. Lowercase extensions. Priority is Vendor, then Topic, then AccountId, then Date.
 - Hyphenated brokerage `AAA-BBBBB-C-D` uses the last 4 of the 5-digit body (609-92865-1-7 → 2865). Portfolio overviews keep a primary-account last-4 when known.
 - Bills with an invoice number, a due date, and new charges stay Invoice even when they list a payment received.
 - Insurance copies the labeled POLICY line (Workers Compensation, or "NJ Auto 7101" → Auto). That line's id is the account id. A bank account being debited is not.
