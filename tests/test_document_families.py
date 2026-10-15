@@ -205,6 +205,25 @@ class TestDocumentFamilyGoldens:
         }
         assert _filename(info, _load('sheraton_receipt.txt')) == 'Sheraton Receipt 20261001.pdf'
 
+    def test_reseller_receipt_names_the_seller(self):
+        info = {
+            'business_name': 'Paddle.com',
+            'document_type': 'Receipt',
+            'document_title': None,
+            'invoice_date': '2026-10-15',
+            'invoice_number': '12345678-123456789',
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': None,
+        }
+        assert _filename(info, _load('paddle_reseller_receipt.txt')) == 'ProjectionLab Receipt 20261015.pdf'
+
+    def test_reseller_family_ignores_text_without_via_line(self):
+        from document_families import reseller_seller_brand
+
+        assert reseller_seller_brand(_load('sheraton_receipt.txt')) is None
+        assert reseller_seller_brand('Paddle.com\nvia Paddle.com') is None
+
     def test_portal_invoice_id_is_not_a_title(self):
         info = {
             'business_name': 'Starlink',

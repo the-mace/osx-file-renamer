@@ -163,6 +163,13 @@ UUID_RE = re.compile(
 )
 UUID_FRAGMENT_MIN_LEN = 4
 
+# Merchant-of-record checkouts print the seller's brand on the line above
+# "via Paddle.com". The seller is the vendor, Paddle only processes the charge.
+RESELLER_VIA_LINE_RE = re.compile(r'(?i)^via\s+paddle(?:\.com)?$')
+RESELLER_NAME_RE = re.compile(r'(?i)\bpaddle\b')
+RESELLER_BRAND_MAX_WORDS = 4
+RESELLER_HEAD_LINES = 15
+
 PATIENT_LINE_RE = re.compile(
     r'(?i)\b(?:patient|animal|pet|horse)\s*(?:name)?\s*[:#\-]\s*'
     r"([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,2})"
@@ -729,3 +736,33 @@ def labeled_patient_names(text):
         seen.add(key)
         found.append(name)
     return found
+
+
+def reseller_seller_brand(text):
+    """Seller brand printed above a "via Paddle.com" line, or None."""
+    if not text:
+        return None
+    lines = text.splitlines()[:RESELLER_HEAD_LINES]
+    for index, line in enumerate(lines):
+        if not RESELLER_VIA_LINE_RE.match(_first_column(line)):
+            continue
+        for previous in reversed(lines[:index]):
+            brand = _first_column(previous)
+            if not brand:
+                continue
+            if RESELLER_NAME_RE.search(brand) or len(brand.split()) > RESELLER_BRAND_MAX_WORDS:
+                return None
+            return brand
+    return None
+
+
+def apply_reseller_seller(info, text):
+    """Name the seller, not the payment reseller (ProjectionLab via Paddle.com)."""
+    brand = reseller_seller_brand(text)
+    if not brand or info.get('business_name') == brand:
+        return False
+    logging.getLogger(__name__).info(
+        f"Document family reseller: vendor {info.get('business_name')!r} -> {brand!r}"
+    )
+    info['business_name'] = brand
+    return True

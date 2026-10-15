@@ -236,7 +236,7 @@ Examples:
 - `Fidelity Trade Confirmation 20260731.pdf`
 - `Starlink Invoice 7455 20260917.pdf` (portal invoice ids like `INV-DF-US-PT0…` are not titles)
 - `X Money Money Market Statement 8011 20260930.pdf` (account number in the footer, even past page 2)
-- `Paddle Receipt 20261015.pdf` (vendor `Paddle.com`; web-domain suffixes are dropped)
+- `ProjectionLab Receipt 20261015.pdf` (the seller printed above "via Paddle.com", not the reseller; web-domain suffixes like `.com` are dropped from vendors)
 - `Dr Smith Invoice ACS12B4 20240115.pdf`
 - `Vet Clinic Invoice - Whiskers 20240110.pdf`
 - `Equine Therapies Invoice 2384 20260819.pdf` (multi-animal statement — no horse name)

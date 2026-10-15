@@ -1350,6 +1350,11 @@ def _run_portal_family(info, full_text, head_text):
     return _apply_portal_invoice_family(info)
 
 
+def _run_reseller_family(info, full_text, head_text):
+    text = head_text if head_text is not None else full_text
+    return bool(text) and document_families.apply_reseller_seller(info, text)
+
+
 def _run_insurance_family(info, full_text, head_text):
     del head_text
     return bool(full_text) and document_families.apply_insurance_policy(info, full_text)
@@ -1388,6 +1393,7 @@ def _run_vet_family(info, full_text, head_text):
 # Earlier families win on a field they set. Portal clears junk titles first.
 _DOCUMENT_FAMILIES = (
     ('portal_invoice', _run_portal_family),
+    ('reseller', _run_reseller_family),
     ('insurance', _run_insurance_family),
     ('receipt', _run_receipt_family),
     ('brokerage_statement', _run_statement_family),

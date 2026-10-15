@@ -1,0 +1,37 @@
+10/15/26, 8:05 AM                                                  Your Paddle.com Order #12345678-123456789
+
+
+
+
+         ProjectionLab
+         via Paddle.com
+
+
+
+
+         Receipt PAID
+
+         Receipt to                                                                                                     Receipt from
+
+                                                                                                                       Paddle.com Inc
+
+                                                                                                               100 Example St #100
+                                                                                                                 New York, 10001
+                                                                                                                         United States
+
+
+
+
+         Your order
+
+         Order Number / Receipt: #12345678-123456789                                                                    Currency: USD
+         Billing date: Oct 15, 2026
+
+                                                 Billing period                                         Quantity                Price
+
+           ProjectionLab Premium                 Oct 15, 2026 - Oct 14, 2027                                     1         US$100.00
+
+           YOUR ORDER                                                                                                US$100.00
+
+                               The US$100.00 payment will appear on your bank/card statement as:
+                                                 PADDLE.NET* PROJ.LAB

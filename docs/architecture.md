@@ -15,7 +15,7 @@ Read this before editing `invoice_renamer.py`, `llm_client.py`, or `document_fam
 ### document_families.py
 
 - Labeled-line parsers for text PDFs. Each family returns facts that overwrite the model.
-- Families: portal invoice, insurance, receipt, brokerage and bank statement date, account number, utility premise, vet patients.
+- Families: portal invoice, reseller seller (ProjectionLab via Paddle.com), insurance, receipt, brokerage and bank statement date, account number, utility premise, vet patients.
 - A new issuer is a parser plus a redacted text dump in `tests/fixtures/naming/`, not another prompt paragraph.
 - Photos and scans have no `pdftotext` output, so these families no-op and the vision model still names them.
 
