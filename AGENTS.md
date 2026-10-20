@@ -47,6 +47,7 @@ Python builds the filename. The model returns facts. On a text PDF, `document_fa
 - Party is one named patient or animal. Omit it when two or more animals have charges.
 - The original filename is a weak signal and a code fallback for a missing qualifier or last-4. Portal invoice-id names (`INV-DF-US-PT0…`) and base64 download tokens are not titles. A UUID fragment (Team ID, tenant id) is not an account id. Use the invoice reference last-4.
 - A labeled Account Number, including one past page 2, fills last-4. The neighboring routing number is not the account id.
+- A scanned check is `Check <number> <date>`, or `Checks <date>` for several. No payer or vendor. A check date a decade old (handwritten 26 read as 2016) is shifted into the last year.
 - Completions use temperature 0 (`LLM_TEMPERATURE`). Known dual brands collapse in `FILENAME_ABBREVIATIONS` (Sheraton Sand Key Resort → Sheraton, Advantage Propane → Paraco).
 - A new issuer is a parser plus a redacted dump in `tests/fixtures/naming/`, not another prompt paragraph. Photos and scans have no `pdftotext` output, so families no-op and the vision model still names them.
 

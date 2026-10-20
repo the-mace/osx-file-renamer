@@ -5,7 +5,7 @@ import argparse
 import subprocess
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import hashlib
@@ -76,7 +76,10 @@ and overwrites those fields. Still return your best read. Do not invent a value 
 
 2. document_type — REQUIRED, exactly ONE of:
    Invoice | Quote | Statement | Receipt | Confirmation | Notice | Letter | Report |
-   Form | Contract | Policy | Certificate | Permit | Map | Itinerary | Test
+   Form | Contract | Policy | Certificate | Permit | Map | Itinerary | Test | Check
+   - Check for a paper bank check ("Pay to the Order of"), not Receipt. invoice_number = the
+     check number printed top right. If 2+ checks appear, invoice_number is a JSON array of
+     their check numbers. invoice_date = the date written on the check.
    - Statement if "statement" is prominent (not Report)
    - Brokerage / IRA / investment / portfolio / crypto account period summaries → Statement
    - Confirmation for trade/order/booking confirmations (not Receipt). Subtype goes in
@@ -165,6 +168,12 @@ _VENDOR_DOMAIN_SUFFIX_RE = re.compile(r'(?<=[A-Za-z0-9])\.(?:co\.uk|com|net|org|
 MAX_ACCOUNT_ID_LEN = document_families.MAX_ACCOUNT_ID_LEN
 # Filename ref slot is last-4 only (low PII); longer invoice/doc ids collapse the same way
 REF_ID_DISPLAY_LEN = 4
+# A scanned check is deposited within months. A written "26" read as 2016 lands
+# a decade back, so a check date older than this is shifted forward ten years
+# when that puts it inside the window.
+CHECK_MAX_AGE_DAYS = 365
+CHECK_MAX_POSTDATE_DAYS = 31
+CHECK_DECADE_YEARS = 10
 # Vendor download masks: XXXX2865, XXXX2865-8, xx-1234
 _FILENAME_MASKED_ACCOUNT_RE = re.compile(r'(?i)\bx{2,}[\s_-]*(\d{4})\b')
 # 4-digit body plus trailing check digit: 2865-8 / 2865 8
@@ -1927,6 +1936,50 @@ def _strip_opaque_qualifier_tokens(info):
     return info
 
 
+def _correct_check_decade(date_str, now=None):
+    """Shift a check date read ten years early (handwritten 26 → 2016) into the recent window."""
+    try:
+        date_obj = datetime.strptime(date_str or '', '%Y-%m-%d')
+    except ValueError:
+        return date_str
+    now = now or datetime.now()
+    oldest = now - timedelta(days=CHECK_MAX_AGE_DAYS)
+    if date_obj >= oldest:
+        return date_str
+    try:
+        shifted = date_obj.replace(year=date_obj.year + CHECK_DECADE_YEARS)
+    except ValueError:
+        return date_str
+    if oldest <= shifted <= now + timedelta(days=CHECK_MAX_POSTDATE_DAYS):
+        return shifted.strftime('%Y-%m-%d')
+    return date_str
+
+
+def _normalize_check_fields(info, now=None):
+    """Checks are named by number and date only: "Check 2328" or "Checks" for several."""
+    logger = logging.getLogger(__name__)
+    numbers = info.get('invoice_number')
+    if not isinstance(numbers, list):
+        numbers = [numbers] if numbers else []
+    numbers = [n for n in numbers if n and n != 'null']
+    if len(numbers) > 1:
+        info['document_type'] = 'Checks'
+        info['invoice_number'] = None
+    else:
+        info['invoice_number'] = numbers[0] if numbers else None
+    for key in ('account_type', 'account_last_4', 'document_title', 'qualifier', 'patient_animal_name'):
+        if key in info:
+            info[key] = None
+    corrected = _correct_check_decade(info.get('invoice_date'), now)
+    if corrected != info.get('invoice_date'):
+        logger.info(f"Check date {info.get('invoice_date')} is a decade old; using {corrected}")
+        info['invoice_date'] = corrected
+
+
+def _is_check_type(document_type):
+    return (document_type or '').lower() in ('check', 'checks')
+
+
 def _sanitize_document_fields(info):
     """Sanitize account and invoice fields based on document type"""
     logger = logging.getLogger(__name__)
@@ -1938,6 +1991,10 @@ def _sanitize_document_fields(info):
     # Fix Statement/Report/account-label confusions before account-detail stripping
     # (so type=Investment is coerced to Statement and keeps last-4 / account_type).
     _normalize_financial_statement_fields(info)
+
+    if _is_check_type(info.get('document_type')):
+        _normalize_check_fields(info)
+        return
 
     # Keep account details for types that commonly reference a service/financial account.
     # Invoice (utility/telecom) and Confirmation (trade/order) need last-4 for filing;
@@ -2131,6 +2188,15 @@ def _build_filename_parts(fields, file_ext):
         else:
             new_filename = f"{usdf_test_name}{date_part}{file_ext}"
         return new_filename, invoice_date
+
+    # Checks are filed by where they are deposited, so the payer is not in the name.
+    if _is_check_type(document_type):
+        filename_parts = [document_type]
+        if invoice_number:
+            filename_parts.append(invoice_number)
+        if invoice_date and invoice_date != "00000000":
+            filename_parts.append(invoice_date)
+        return f"{' '.join(filename_parts)}{file_ext}", invoice_date
 
     display_topic = _select_display_topic(business_name, document_type, document_title)
 

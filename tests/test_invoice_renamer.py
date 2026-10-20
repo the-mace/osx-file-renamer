@@ -1443,6 +1443,40 @@ class TestRenameInvoiceConversion:
         assert trade[:trade.rindex(marker)] == amex[:amex.rindex(marker)]
         assert 'weak signal' in trade[len(INVOICE_EXTRACTION_PROMPT):trade.rindex(marker)]
 
+    def _check_filename(self, info, now):
+        from invoice_renamer import _build_filename_parts, _clean_and_validate_fields, _normalize_check_fields
+
+        _normalize_check_fields(info, now=now)
+        return _build_filename_parts(_clean_and_validate_fields(info), '.pdf')[0]
+
+    def test_scanned_check_named_by_number_and_corrected_decade(self):
+        """Handwritten 10-19-26 came back as 2016 and the payer became the vendor."""
+        info = {
+            'business_name': 'Acme Therapies', 'document_type': 'Check', 'document_title': None,
+            'invoice_date': '2016-10-19', 'invoice_number': '1234', 'patient_animal_name': None,
+            'account_type': 'Checking', 'account_last_4': '1234',
+        }
+        assert self._check_filename(info, datetime(2026, 10, 20)) == 'Check 1234 20261019.pdf'
+
+    def test_several_checks_named_checks_with_date(self):
+        info = {
+            'business_name': 'Acme', 'document_type': 'Check', 'document_title': None,
+            'invoice_date': '2026-10-19', 'invoice_number': ['1234', '5678'],
+            'patient_animal_name': None, 'account_type': None, 'account_last_4': None,
+        }
+        assert self._check_filename(info, datetime(2026, 10, 20)) == 'Checks 20261019.pdf'
+
+    def test_check_decade_correction_only_inside_window(self):
+        from invoice_renamer import _correct_check_decade
+
+        now = datetime(2026, 10, 20)
+        assert _correct_check_decade('2016-10-19', now) == '2026-10-19'
+        assert _correct_check_decade('2026-03-01', now) == '2026-03-01'
+        # Shifting ten years would land in the future or still be stale: leave as read
+        assert _correct_check_decade('2017-03-01', now) == '2017-03-01'
+        assert _correct_check_decade('2014-10-19', now) == '2014-10-19'
+        assert _correct_check_decade(None, now) is None
+
     def test_naming_grammar_golden_table(self):
         """Golden filenames from cleaned fields — assembly policy source of truth."""
         from invoice_renamer import (
