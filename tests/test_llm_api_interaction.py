@@ -44,6 +44,9 @@ class TestCallLLMApi:
         assert call_kwargs['messages'] == [{"role": "user", "content": "Test prompt"}]
         assert call_kwargs['stream'] is False
         assert call_kwargs['temperature'] == 0
+        assert call_kwargs['extra_headers'] == {
+            "x-grok-conv-id": llm_client.XAI_PROMPT_CACHE_KEY
+        }
 
     @patch('llm_client.load_env_file')
     @patch('llm_client.completion')
@@ -181,6 +184,7 @@ class TestCallLLMApi:
 
         call_kwargs = mock_completion.call_args.kwargs
         assert call_kwargs['model'] == "custom-model"
+        assert call_kwargs['extra_headers'] == {}
 
     @patch('llm_client.completion')
     def test_call_llm_api_http_error(self, mock_completion):
@@ -217,6 +221,7 @@ class TestCallLLMApi:
 
         assert mock_completion.call_count == 3
         assert [c.args[0] for c in mock_sleep.call_args_list] == [1, 2]
+        assert all(c.kwargs["extra_headers"] == {} for c in mock_completion.call_args_list)
 
     @patch('llm_client.time.sleep')
     @patch('llm_client.completion')

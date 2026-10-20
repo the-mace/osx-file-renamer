@@ -70,6 +70,10 @@ ENV_FILE_PATH = "~/.env"
 # Non-reasoning models are much faster for structured JSON extraction
 DEFAULT_MODEL = "xai/grok-4.20-0309-non-reasoning"
 VISION_MODEL = "xai/grok-4.20-0309-non-reasoning"
+# xAI stores the prompt cache per server. One id for every call keeps a batch
+# of renames on the same server so the shared instruction prefix can hit.
+# A per-process id would miss, because each file used to be its own process.
+XAI_PROMPT_CACHE_KEY = "osx-file-renamer"
 # "high" is required for phone photos of forms (small letterhead stamps, faint print).
 # "low" misreads vendor names on hard images (e.g. red A&L stamp → random auto shop).
 # Override with LLM_IMAGE_DETAIL=low for cheaper bulk runs on clean digital PDFs.
@@ -657,6 +661,29 @@ def load_env_file():
         os.environ["XAI_API_KEY"] = os.getenv("GROK_API_KEY")
 
 
+def _is_xai_model(model):
+    """True for LiteLLM xAI ids and bare Grok names."""
+    name = (model or "").lower()
+    return name.startswith("xai/") or name.startswith("grok")
+
+
+def _prompt_cache_headers(model):
+    """Sticky routing for xAI. Other providers ignore this header, so omit it."""
+    if _is_xai_model(model):
+        return {"x-grok-conv-id": XAI_PROMPT_CACHE_KEY}
+    return {}
+
+
+def _cached_prompt_tokens(response):
+    """xAI reports reused prompt tokens here. Absent on a miss or another provider."""
+    usage = getattr(response, "usage", None)
+    details = getattr(usage, "prompt_tokens_details", None) if usage is not None else None
+    cached = getattr(details, "cached_tokens", None) if details is not None else None
+    if isinstance(cached, int):
+        return cached
+    return None
+
+
 def call_llm_api(prompt, model=None, file_path=None, all_pages=False, auto_vision=True):
     """Call LLM API via LiteLLM
 
@@ -744,7 +771,14 @@ def call_llm_api(prompt, model=None, file_path=None, all_pages=False, auto_visio
                 stream=False,
                 timeout=API_TIMEOUT,
                 temperature=LLM_TEMPERATURE,
+                extra_headers=_prompt_cache_headers(model),
             )
+
+            cached = _cached_prompt_tokens(response)
+            if cached is not None:
+                logging.getLogger(__name__).info(
+                    f"Prompt cache: cached_tokens={cached} model={model}"
+                )
 
             return response.choices[0].message.content
 

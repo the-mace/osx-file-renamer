@@ -1428,6 +1428,21 @@ class TestRenameInvoiceConversion:
         assert 'Auto Property Insurance' not in base
         assert 'Auto Policy' not in base
 
+    def test_build_extraction_prompt_keeps_static_prefix(self):
+        """Filename sits after the rules so xAI can reuse the instruction prefix."""
+        from invoice_renamer import _build_extraction_prompt, INVOICE_EXTRACTION_PROMPT
+
+        trade = _build_extraction_prompt('Trade Confirmation')
+        amex = _build_extraction_prompt('Amex CC Statement')
+        marker = 'The file\'s original name was "'
+
+        assert trade.startswith(INVOICE_EXTRACTION_PROMPT + '\n\n')
+        assert amex.startswith(INVOICE_EXTRACTION_PROMPT + '\n\n')
+        assert trade.endswith('Trade Confirmation".')
+        assert amex.endswith('Amex CC Statement".')
+        assert trade[:trade.rindex(marker)] == amex[:amex.rindex(marker)]
+        assert 'weak signal' in trade[len(INVOICE_EXTRACTION_PROMPT):trade.rindex(marker)]
+
     def test_naming_grammar_golden_table(self):
         """Golden filenames from cleaned fields — assembly policy source of truth."""
         from invoice_renamer import (

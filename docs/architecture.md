@@ -50,6 +50,7 @@ Keys and the model come from the environment or `~/.env`:
 - `LLM_MODEL` defaults to the fast non-reasoning `xai/grok-4.20-0309-non-reasoning`. Any LiteLLM model string works. The provider's current model list is the reference.
 - Text models for text PDFs and text files. Vision models for images and scanned PDFs.
 - Legacy Grok names (`grok-4-1-fast-*`, `grok-beta`) are mapped to current models in `llm_client.py`.
+- xAI calls send `x-grok-conv-id: osx-file-renamer` so a batch stays on one server and the prompt cache can hit. The extraction rules are a byte-stable prefix. The original filename is appended after those rules. Other providers do not get the header. A hit is logged as `Prompt cache: cached_tokens=`.
 
 Provider list: <https://docs.litellm.ai/docs/providers>.
 

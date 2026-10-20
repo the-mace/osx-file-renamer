@@ -10,6 +10,7 @@ Read this only when a rename feels slow or vision API cost is the task. Measure 
 - Fast non-reasoning default model. Vision `detail: high` (override `LLM_IMAGE_DETAIL=low` for cheap bulk). JPEG page renders.
 - Title, vendor, and type dedupe for shorter filenames.
 - Slim fact-only extraction prompt. Naming grammar is owned by code.
+- xAI prompt cache: extraction rules stay a byte prefix, the filename hint is last, and every xAI call sends the same `x-grok-conv-id`.
 - Vision `detail: high` by default, because phone photos of stamped job forms need it.
 - Image inputs: extract from the original photo, and convert to PDF only for the renamed output.
 

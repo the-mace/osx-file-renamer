@@ -464,12 +464,16 @@ def _original_filename_hint(file_path):
 
 
 def _build_extraction_prompt(filename_hint=None):
-    """Build the extraction prompt; optionally note the original filename as a weak signal."""
+    """Build the extraction prompt; optionally note the original filename as a weak signal.
+
+    xAI caches the byte prefix of a request. The extraction rules stay first and
+    identical across files. The filename is last so a different name does not
+    invalidate those rules.
+    """
     if not filename_hint:
         return INVOICE_EXTRACTION_PROMPT
-    hint_block = (
-        f'The file\'s original name was "{filename_hint}". '
-        'Use it as a weak signal for vendor, type, document_title, or account_last_4 when '
+    hint_rules = (
+        'Use the original filename only as a weak signal for vendor, type, document_title, or account_last_4 when '
         'consistent with content (e.g. "Trade Confirmation" → type Confirmation, document_title Trade; '
         '"XXXX2865-8" → account_last_4 2865). '
         'Content wins on conflict (a paid confirmation with no amount due → Receipt even if named Billing; '
@@ -478,9 +482,12 @@ def _build_extraction_prompt(filename_hint=None):
         'slice of the same hyphenated brokerage number. '
         'Ignore download/tracking junk in the name that does not appear on the document '
         '(e.g. RavenInvoice30928720 → ignore Raven; do not invent a title from it). '
-        'Do not invent a premise/location label from the filename alone.\n\n'
+        'Do not invent a premise/location label from the filename alone.'
     )
-    return hint_block + INVOICE_EXTRACTION_PROMPT
+    return (
+        f'{INVOICE_EXTRACTION_PROMPT}\n\n{hint_rules}\n\n'
+        f'The file\'s original name was "{filename_hint}".'
+    )
 
 
 def _raw_qualifier(info):
