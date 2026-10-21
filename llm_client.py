@@ -674,14 +674,23 @@ def _prompt_cache_headers(model):
     return {}
 
 
-def _cached_prompt_tokens(response):
-    """xAI reports reused prompt tokens here. Absent on a miss or another provider."""
+def _int_or_none(value):
+    return value if isinstance(value, int) else None
+
+
+def _usage_log_line(response, model):
+    """LiteLLM normalizes usage for every provider; cached_tokens is absent on a miss."""
     usage = getattr(response, "usage", None)
-    details = getattr(usage, "prompt_tokens_details", None) if usage is not None else None
-    cached = getattr(details, "cached_tokens", None) if details is not None else None
-    if isinstance(cached, int):
-        return cached
-    return None
+    prompt = _int_or_none(getattr(usage, "prompt_tokens", None))
+    if prompt is None:
+        return None
+    details = getattr(usage, "prompt_tokens_details", None)
+    cached = _int_or_none(getattr(details, "cached_tokens", None)) or 0
+    completion_tokens = _int_or_none(getattr(usage, "completion_tokens", None))
+    return (
+        f"Prompt cache: cached_tokens={cached} prompt_tokens={prompt} "
+        f"completion_tokens={completion_tokens} model={model}"
+    )
 
 
 def call_llm_api(prompt, model=None, file_path=None, all_pages=False, auto_vision=True):
@@ -774,11 +783,9 @@ def call_llm_api(prompt, model=None, file_path=None, all_pages=False, auto_visio
                 extra_headers=_prompt_cache_headers(model),
             )
 
-            cached = _cached_prompt_tokens(response)
-            if cached is not None:
-                logging.getLogger(__name__).info(
-                    f"Prompt cache: cached_tokens={cached} model={model}"
-                )
+            usage_line = _usage_log_line(response, model)
+            if usage_line:
+                logging.getLogger(__name__).info(usage_line)
 
             return response.choices[0].message.content
 

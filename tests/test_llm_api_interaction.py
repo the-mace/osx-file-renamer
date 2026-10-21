@@ -251,6 +251,33 @@ class TestCallLLMApi:
         assert mock_completion.call_count == 1
         mock_sleep.assert_not_called()
 
+    @patch('llm_client.completion')
+    def test_call_llm_api_logs_prompt_and_cached_tokens(self, mock_completion, caplog):
+        response = create_mock_litellm_response()
+        response.usage.prompt_tokens = 2400
+        response.usage.completion_tokens = 85
+        response.usage.prompt_tokens_details.cached_tokens = 2048
+        mock_completion.return_value = response
+
+        with caplog.at_level("INFO", logger="llm_client"):
+            call_llm_api("Test prompt", model="xai/grok-4.20-0309-non-reasoning")
+
+        assert ("Prompt cache: cached_tokens=2048 prompt_tokens=2400 completion_tokens=85 "
+                "model=xai/grok-4.20-0309-non-reasoning") in caplog.text
+
+    @patch('llm_client.completion')
+    def test_call_llm_api_logs_cache_miss_as_zero(self, mock_completion, caplog):
+        response = create_mock_litellm_response()
+        response.usage.prompt_tokens = 900
+        response.usage.completion_tokens = 40
+        response.usage.prompt_tokens_details = None
+        mock_completion.return_value = response
+
+        with caplog.at_level("INFO", logger="llm_client"):
+            call_llm_api("Test prompt", model="claude-sonnet-4")
+
+        assert "Prompt cache: cached_tokens=0 prompt_tokens=900 completion_tokens=40 model=claude-sonnet-4" in caplog.text
+
 
 class TestLoadEnvFile:
 
