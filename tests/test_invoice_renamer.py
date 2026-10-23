@@ -579,6 +579,30 @@ class TestRenameInvoiceConversion:
         assert filename.endswith('.pdf')
         assert not filename.endswith('.PDF')
 
+    def test_unreadable_vendor_is_dropped_from_filename(self):
+        info = {
+            'business_name': 'Unknown',
+            'document_type': 'Form',
+            'document_title': 'Builders Risk Application',
+            'invoice_date': '2026-10-23',
+        }
+        _sanitize_document_fields(info)
+        filename, _ = _build_filename_parts(_clean_and_validate_fields(info), '.pdf')
+        assert filename == 'Builders Risk Application 20261023.pdf'
+
+    def test_sanity_pass_drops_unknown_party_and_its_dash(self):
+        from invoice_renamer import _sanity_check_filename
+        assert _sanity_check_filename('Vet Clinic Invoice - Unknown 20260101.pdf') == 'Vet Clinic Invoice 20260101.pdf'
+
+    def test_sanity_pass_keeps_a_name_with_only_a_date_readable(self):
+        from invoice_renamer import _sanity_check_filename
+        assert _sanity_check_filename('Unknown 20260101.pdf') == 'Document 20260101.pdf'
+
+    def test_sanity_pass_leaves_good_names_alone(self):
+        from invoice_renamer import _sanity_check_filename
+        name = 'Amex Credit Card Statement 1234 - Bella 20260101.pdf'
+        assert _sanity_check_filename(name) == name
+
     def test_select_display_topic_drops_redundant_title(self):
         """Redundant titles like 'Travel Itinerary' collapse to document type."""
         from invoice_renamer import _select_display_topic, _build_filename_parts

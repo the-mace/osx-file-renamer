@@ -2085,6 +2085,10 @@ def _clean_and_validate_fields(info):
 _TYPES_KEEP_SUBTYPE_WITH_TYPE = frozenset({
     'confirmation', 'certificate', 'permit',
 })
+# Model/code fallbacks that mean "not found"; never useful in a filename
+_PLACEHOLDER_NAME_TOKENS = frozenset({
+    'unknown', 'none', 'null', 'undefined', 'unspecified',
+})
 # Account categories that are not useful as a middle filename token
 _EXCLUDED_ACCOUNT_TYPES = frozenset({
     'life insurance', 'annuity', 'vul',
@@ -2156,6 +2160,36 @@ def _select_display_topic(business_name, document_type, document_title):
 
 
 def _build_filename_parts(fields, file_ext):
+    """Assemble the filename from cleaned fields, then run the final sanity pass."""
+    new_filename, invoice_date = _assemble_filename(fields, file_ext)
+    return _sanity_check_filename(new_filename), invoice_date
+
+
+def _sanity_check_filename(filename):
+    """Last pass over the assembled name: no placeholder words or dangling party dashes.
+
+    The prompt asks for "Unknown" when the issuer is unreadable, and clean_filename
+    falls back to it, so it can reach the name as the vendor or party.
+    """
+    stem, ext = os.path.splitext(filename)
+    tokens = stem.split()
+    kept = [t for t in tokens if t.lower() not in _PLACEHOLDER_NAME_TOKENS]
+    final = []
+    for i, tok in enumerate(kept):
+        nxt = kept[i + 1] if i + 1 < len(kept) else None
+        trailing_date = nxt is not None and i + 2 == len(kept) and re.fullmatch(r'\d{8}', nxt)
+        if tok == '-' and (not final or nxt is None or nxt == '-' or trailing_date):
+            continue
+        final.append(tok)
+    if not final or all(t.isdigit() for t in final):
+        final.insert(0, 'Document')
+    cleaned = f"{' '.join(final)}{ext}"
+    if cleaned != filename:
+        logging.getLogger(__name__).info(f"Filename sanity pass: {filename!r} -> {cleaned!r}")
+    return cleaned
+
+
+def _assemble_filename(fields, file_ext):
     """Assemble the final filename from cleaned fields (deterministic naming grammar).
 
     Grammar: Vendor [AccountType] Topic [AccountId] [- Party] [RefId] Date.ext
