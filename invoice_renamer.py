@@ -906,22 +906,22 @@ def convert_to_pdf(file_path):
 
 
 # Keep rename history across multi-file batches without retaining forever.
-LOG_RETENTION_DAYS = 1  # current file + this many previous daily backups
-# Noisy third-party loggers that used to flood /tmp with full LLM prompts
+LOG_RETENTION_DAYS = 14  # current file + this many previous daily backups
+# Noisy third-party loggers that used to flood the log with full LLM prompts
 _NOISY_LOGGERS = (
     'LiteLLM', 'litellm', 'httpx', 'httpcore', 'openai', 'urllib3', 'asyncio',
 )
 
 
 def get_log_file_path():
-    """Return the primary log file path (/tmp on Unix, platform temp otherwise)."""
-    if os.path.exists('/tmp') and os.path.isdir('/tmp'):  # nosec B108
-        return '/tmp/invoice_renamer.log'  # nosec B108
+    """~/Library/Logs on macOS, which survives restarts unlike /tmp; platform temp elsewhere."""
+    if sys.platform == 'darwin':
+        return os.path.expanduser('~/Library/Logs/invoice-renamer/invoice_renamer.log')
     return os.path.join(tempfile.gettempdir(), 'invoice_renamer.log')
 
 
 def setup_logging():
-    """Setup INFO logging with ~1 day retention for multi-file rename history.
+    """Setup INFO logging with two weeks of daily rotation for rename history.
 
     Previous design (DEBUG + 100KB truncate) was wiped by a single LiteLLM dump,
     so agent/debug sessions could not see earlier renames from the same day.

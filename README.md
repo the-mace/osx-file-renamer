@@ -370,19 +370,21 @@ pngquant --version # pngquant
 
 ### Debug Logging
 
-Rename runs log at **INFO** to a daily-rotated file (current day + one previous day). Third-party LLM client noise is suppressed so a batch of files still leaves readable history.
+Rename runs log at **INFO** to a daily-rotated file (current day + 14 previous days). On macOS the log is `~/Library/Logs/invoice-renamer/invoice_renamer.log`, which survives restarts; other platforms use the temp directory.
+
+Third-party LLM client noise is suppressed so a batch of files still leaves readable history.
 
 ```bash
 # On macOS/Linux — live tail
-tail -f /tmp/invoice_renamer.log
+tail -f ~/Library/Logs/invoice-renamer/invoice_renamer.log
 
 # Recent renames only
-grep -E 'Successfully renamed|Would rename|New filename|Extracted account type|Finished' /tmp/invoice_renamer.log
+grep -E 'Successfully renamed|Would rename|New filename|Extracted account type|Finished' ~/Library/Logs/invoice-renamer/invoice_renamer.log
 
-# Previous day's rotated backup (if present)
-ls -la /tmp/invoice_renamer.log*
+# Rotated daily backups
+ls -la ~/Library/Logs/invoice-renamer/
 
-# Or find the temp directory
+# Other platforms: the log is in the temp directory
 python3 -c "import tempfile; print(tempfile.gettempdir())"
 ```
 

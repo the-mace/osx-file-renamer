@@ -25,7 +25,7 @@ from invoice_renamer import (
 class TestSetupLogging:
 
     def test_setup_logging_uses_timed_rotation(self, tmp_path, monkeypatch):
-        """Test setup_logging uses daily rotation with ~1 day retention."""
+        """Test setup_logging uses daily rotation with two weeks of retention."""
         log_path = tmp_path / "invoice_renamer.log"
         monkeypatch.setattr('invoice_renamer.get_log_file_path', lambda: str(log_path))
         # Isolate root handlers so other tests are not affected
@@ -38,7 +38,7 @@ class TestSetupLogging:
             assert logger.name == "invoice_renamer"
             timed = [h for h in root.handlers if isinstance(h, TimedRotatingFileHandler)]
             assert len(timed) == 1
-            assert timed[0].backupCount == LOG_RETENTION_DAYS
+            assert timed[0].backupCount == LOG_RETENTION_DAYS == 14
             assert timed[0].level == __import__('logging').INFO
             # Second call must not stack handlers
             setup_logging()
@@ -51,10 +51,32 @@ class TestSetupLogging:
             for h in old_handlers:
                 root.addHandler(h)
 
-    def test_get_log_file_path_prefers_tmp(self):
-        """Primary log path is under /tmp when available."""
-        path = get_log_file_path()
-        assert path.endswith('invoice_renamer.log')
+    def test_get_log_file_path_uses_library_logs_on_macos(self, monkeypatch):
+        monkeypatch.setattr('invoice_renamer.sys.platform', 'darwin')
+        monkeypatch.setenv('HOME', '/Users/test')
+        assert get_log_file_path() == '/Users/test/Library/Logs/invoice-renamer/invoice_renamer.log'
+
+    def test_get_log_file_path_uses_temp_elsewhere(self, monkeypatch, tmp_path):
+        monkeypatch.setattr('invoice_renamer.sys.platform', 'linux')
+        monkeypatch.setattr('invoice_renamer.tempfile.gettempdir', lambda: str(tmp_path))
+        assert get_log_file_path() == str(tmp_path / 'invoice_renamer.log')
+
+    def test_setup_logging_creates_missing_log_dir(self, tmp_path, monkeypatch):
+        log_path = tmp_path / "Logs" / "invoice-renamer" / "invoice_renamer.log"
+        monkeypatch.setattr('invoice_renamer.get_log_file_path', lambda: str(log_path))
+        root = __import__('logging').getLogger()
+        old_handlers = list(root.handlers)
+        for h in old_handlers:
+            root.removeHandler(h)
+        try:
+            setup_logging()
+            assert log_path.parent.is_dir()
+        finally:
+            for h in list(root.handlers):
+                h.close()
+                root.removeHandler(h)
+            for h in old_handlers:
+                root.addHandler(h)
 
 
 class TestCallLLMApi:

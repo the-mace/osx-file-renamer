@@ -453,7 +453,7 @@ What actually happened.
 **Log output:**
 ```
 
-Paste relevant log output from /tmp/invoice_renamer.log
+Paste relevant log output from ~/Library/Logs/invoice-renamer/invoice_renamer.log
 
 ```
 

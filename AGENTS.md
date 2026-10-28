@@ -53,6 +53,6 @@ Python builds the filename. The model returns facts. On a text PDF, `document_fa
 
 ## Where things live
 
-- Log: `/tmp/invoice_renamer.log` on Unix (platform temp on Windows). INFO level, daily rotation, current day plus one backup. A lost API error must land in that log, not only as exit code 1.
+- Log: `~/Library/Logs/invoice-renamer/invoice_renamer.log` on macOS (platform temp elsewhere). INFO level, daily rotation, current day plus 14 backups. A lost API error must land in that log, not only as exit code 1.
 - Command the shortcut runs: `/usr/local/bin/invoice-renamer`.
 - API keys: the environment or `~/.env`.
