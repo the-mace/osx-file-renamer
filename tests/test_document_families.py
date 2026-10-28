@@ -57,6 +57,48 @@ class TestDocumentFamilyGoldens:
             'X Money Money Market Statement 8011 20260930.pdf'
         )
 
+    def test_masked_account_tail_replaces_zero_pad(self):
+        info = {
+            'business_name': 'Morgan Stanley',
+            'document_type': 'Confirmation',
+            'document_title': 'Select UMA Update',
+            'invoice_date': '2026-10-28',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'Portfolio',
+            'account_last_4': '0638',
+        }
+        assert _filename(info, _load('morgan_stanley_masked_account.txt')) == (
+            'Morgan Stanley Portfolio Select UMA Update Confirmation 638 20261028.pdf'
+        )
+
+    def test_account_type_not_repeated_in_topic(self):
+        info = {
+            'business_name': 'Morgan Stanley',
+            'document_type': 'Confirmation',
+            'document_title': 'Savings Withdrawal',
+            'invoice_date': '2026-10-27',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': 'Savings',
+            'account_last_4': '638',
+        }
+        assert _filename(info, '') == (
+            'Morgan Stanley Savings Withdrawal Confirmation 638 20261027.pdf'
+        )
+
+    def test_guid_in_download_name_is_not_an_account_id(self):
+        from invoice_renamer import _original_filename_hint, _apply_filename_account_id_fallback
+
+        hint = _original_filename_hint(
+            'GeneralCorrespondence-keyAcc-2024-09-13-10.58.43.493143-dt-2026-10-27-'
+            'guid-a9ce5532-8ffc-46d8-94ce-721ccb7c3a04.pdf'
+        )
+        assert 'guid' not in hint.lower()
+        info = {'account_last_4': '638'}
+        _apply_filename_account_id_fallback(info, hint)
+        assert info['account_last_4'] == '638'
+
     def test_travelers_labeled_coverage_not_brand_guess(self):
         info = {
             'business_name': 'Travelers',

@@ -179,6 +179,7 @@ _FILENAME_MASKED_ACCOUNT_RE = re.compile(r'(?i)\bx{2,}[\s_-]*(\d{4})\b')
 # 4-digit body plus trailing check digit: 2865-8 / 2865 8
 _FILENAME_CHECKDIGIT_ACCOUNT_RE = re.compile(r'(?<!\d)(\d{4})[\s_-]\d\b')
 _FILENAME_YEAR_TOKEN_RE = document_families.YEAR_TOKEN_RE
+_FILENAME_UUID_RE = re.compile(r'(?i)(?:\b(?:guid|uuid)[\s_-]*)?' + document_families.UUID_RE.pattern.removeprefix('(?i)'))
 
 # Original filenames that are camera/scanner defaults or bare numbers carry no useful signal
 GENERIC_FILENAME_PATTERNS = [
@@ -459,6 +460,8 @@ def _original_filename_hint(file_path):
     raw = os.path.splitext(os.path.basename(file_path))[0]
     if _is_hash_like_basename(raw):
         return None
+    # Split UUID pieces look like ids: guid a9ce5532-8ffc… became "5532 8", a check-digit account
+    raw = _FILENAME_UUID_RE.sub(' ', raw).strip(' _-')
     name = _strip_filename_date_tokens(raw)
     name = _split_filename_tokens(name)
     # Date tokens may reappear after camelCase/digit splits (e.g. TradeConfirmation07312026)
@@ -2095,6 +2098,17 @@ _EXCLUDED_ACCOUNT_TYPES = frozenset({
 })
 
 
+def _strip_leading_account_type(topic, account_type):
+    """Drop the account type from the front of the topic (Savings + Savings Withdrawal → Withdrawal)."""
+    topic_words = (topic or '').split()
+    type_words = (account_type or '').split()
+    if not type_words or len(topic_words) <= len(type_words):
+        return topic
+    if [w.lower() for w in topic_words[:len(type_words)]] != [w.lower() for w in type_words]:
+        return topic
+    return ' '.join(topic_words[len(type_words):])
+
+
 def _select_display_topic(business_name, document_type, document_title):
     """Turn (type, qualifier) into the Topic segment of the filename.
 
@@ -2238,6 +2252,8 @@ def _assemble_filename(fields, file_ext):
     include_account_type = bool(
         account_type and account_type.lower() not in _EXCLUDED_ACCOUNT_TYPES
     )
+    if include_account_type:
+        display_topic = _strip_leading_account_type(display_topic, account_type)
 
     if include_account_type and account_last_4:
         # Bank/CC/portfolio-with-primary-id: type + last 4

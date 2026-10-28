@@ -22,6 +22,8 @@ ACCOUNT_LABEL_COLUMN_SLACK = 8
 ACCOUNT_NUMBER_LABEL_RE = re.compile(
     r'(?i)\baccount\s*(?:number\b|no\.?\b|#)'
 )
+# Masked labeled value with only the printed tail (Morgan Stanley 225-XXX249)
+MASKED_ACCOUNT_TAIL_RE = re.compile(r'(?i)(?:x|\*|•){2,}[\s-]?(\d{3,4})\b')
 # Labeled insurance product lines. Longest phrases first so
 # "Workers Compensation" is not shortened to a later token.
 POLICY_COVERAGE_PHRASES = (
@@ -356,6 +358,7 @@ def parse_labeled_account_number(text):
 
     A footer table puts the routing number in a different column. Inline
     "Account Number: 363240448011" works too. "Account Notice" does not match.
+    A masked value ("225-XXX249") returns only its printed tail digits.
     """
     if not text:
         return None
@@ -364,7 +367,11 @@ def parse_labeled_account_number(text):
         match = ACCOUNT_NUMBER_LABEL_RE.search(line)
         if not match:
             continue
-        inline = re.search(r'\d{4,}', line[match.end():])
+        after = line[match.end():]
+        masked = MASKED_ACCOUNT_TAIL_RE.search(after)
+        if masked:
+            return masked.group(1)
+        inline = re.search(r'\d{4,}', after)
         if inline:
             if account_last4(inline.group(0)):
                 return inline.group(0)
