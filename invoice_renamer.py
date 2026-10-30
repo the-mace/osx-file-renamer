@@ -174,6 +174,9 @@ REF_ID_DISPLAY_LEN = 4
 CHECK_MAX_AGE_DAYS = 365
 CHECK_MAX_POSTDATE_DAYS = 31
 CHECK_DECADE_YEARS = 10
+# One check scans to a front and a back. Only the first pages reach the model,
+# so a longer scan is several checks even when the model saw just one.
+CHECK_MAX_SIDES = 2
 # Vendor download masks: XXXX2865, XXXX2865-8, xx-1234
 _FILENAME_MASKED_ACCOUNT_RE = re.compile(r'(?i)\bx{2,}[\s_-]*(\d{4})\b')
 # 4-digit body plus trailing check digit: 2865-8 / 2865 8
@@ -1171,6 +1174,18 @@ def _find_pdftotext():
         return None
 
 
+def _find_pdfinfo():
+    """Find pdfinfo command in common locations"""
+    for path in ['/opt/homebrew/bin/pdfinfo', '/usr/bin/pdfinfo', '/usr/local/bin/pdfinfo']:
+        if os.path.exists(path):
+            return path
+    try:
+        result = subprocess.run(['which', 'pdfinfo'], capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+    except subprocess.CalledProcessError:
+        return None
+
+
 def _parse_labeled_statement_date(text):
     """Labeled Statement/Closing/Bill Date as YYYY-MM-DD, or None. See document_families."""
     return document_families.parse_labeled_statement_date(text)
@@ -1216,6 +1231,27 @@ def _pdf_text(file_path, first_page=1, last_page=None):
         return text or None
     except (OSError, subprocess.TimeoutExpired):
         return None
+
+
+def _pdf_page_count(file_path):
+    """Number of pages in a PDF via pdfinfo, or 0 when it cannot be read."""
+    if not file_path or not str(file_path).lower().endswith('.pdf'):
+        return 0
+    pdfinfo_cmd = _find_pdfinfo()
+    if not pdfinfo_cmd:
+        return 0
+    try:
+        result = subprocess.run(
+            [pdfinfo_cmd, file_path],
+            capture_output=True,
+            text=True,
+            timeout=PDF_TEXT_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return 0
+    match = re.search(r'^Pages:\s+(\d+)', result.stdout or '', re.MULTILINE)
+    return int(match.group(1)) if match else 0
 
 
 def _pdf_text_head(file_path, max_pages=1):
@@ -1531,6 +1567,10 @@ def extract_invoice_info(file_path, all_pages=False, filename_hint=None):
             current_date = datetime.now().strftime("%Y-%m-%d")
             parsed_info['invoice_date'] = current_date
             logger.info(f"No date detected, using current date as fallback: {current_date}")
+
+    if _is_check_type(parsed_info.get('document_type')) and _pdf_page_count(file_path) > CHECK_MAX_SIDES:
+        logger.info("Check scan is longer than one front and back; naming it as several checks")
+        parsed_info['document_type'] = 'Checks'
 
     # Labeled lines win over the model: policy, statement date, account number,
     # service location, patients, standalone receipt, portal title junk.
@@ -1959,7 +1999,7 @@ def _correct_check_decade(date_str, now=None):
 
 
 def _normalize_check_fields(info, now=None):
-    """Checks are named by number and date only: "Check 2328" or "Checks" for several."""
+    """Checks are named by date only: "Check for deposit" or "Checks for deposit" for several."""
     logger = logging.getLogger(__name__)
     numbers = info.get('invoice_number')
     if not isinstance(numbers, list):
@@ -1967,10 +2007,7 @@ def _normalize_check_fields(info, now=None):
     numbers = [n for n in numbers if n and n != 'null']
     if len(numbers) > 1:
         info['document_type'] = 'Checks'
-        info['invoice_number'] = None
-    else:
-        info['invoice_number'] = numbers[0] if numbers else None
-    for key in ('account_type', 'account_last_4', 'document_title', 'qualifier', 'patient_animal_name'):
+    for key in ('invoice_number', 'account_type', 'account_last_4', 'document_title', 'qualifier', 'patient_animal_name'):
         if key in info:
             info[key] = None
     corrected = _correct_check_decade(info.get('invoice_date'), now)
@@ -2239,9 +2276,7 @@ def _assemble_filename(fields, file_ext):
 
     # Checks are filed by where they are deposited, so the payer is not in the name.
     if _is_check_type(document_type):
-        filename_parts = [document_type]
-        if invoice_number:
-            filename_parts.append(invoice_number)
+        filename_parts = [document_type, 'for deposit']
         if invoice_date and invoice_date != "00000000":
             filename_parts.append(invoice_date)
         return f"{' '.join(filename_parts)}{file_ext}", invoice_date

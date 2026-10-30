@@ -242,7 +242,7 @@ Examples:
 - `Equine Therapies Invoice 2384 20260819.pdf` (multi-animal statement — no horse name)
 - `Travelers Workers Compensation 4070 20260901.pdf` (copy the labeled policy line; do not guess Auto/Property from the insurer brand)
 - `USAA Auto 7101 20261005.pdf` (policy line "NJ Auto 7101"; the bank account being debited is not the id)
-- `Check 2328 20261019.pdf` (a scanned check: number and written date only; several checks on one scan → `Checks 20261019.pdf`)
+- `Check for deposit 20261019.pdf` (a scanned check: written date only; several checks on one scan, or a PDF past one front and back → `Checks for deposit 20261019.pdf`)
 
 **Party** is a single patient/animal name on vet invoices. It is omitted when the document covers more than one animal.
 

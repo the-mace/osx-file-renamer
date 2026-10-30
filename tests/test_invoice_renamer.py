@@ -1495,22 +1495,48 @@ class TestRenameInvoiceConversion:
         _normalize_check_fields(info, now=now)
         return _build_filename_parts(_clean_and_validate_fields(info), '.pdf')[0]
 
-    def test_scanned_check_named_by_number_and_corrected_decade(self):
+    def test_scanned_check_named_for_deposit_and_corrected_decade(self):
         """Handwritten 10-19-26 came back as 2016 and the payer became the vendor."""
         info = {
             'business_name': 'Acme Therapies', 'document_type': 'Check', 'document_title': None,
             'invoice_date': '2016-10-19', 'invoice_number': '1234', 'patient_animal_name': None,
             'account_type': 'Checking', 'account_last_4': '1234',
         }
-        assert self._check_filename(info, datetime(2026, 10, 20)) == 'Check 1234 20261019.pdf'
+        assert self._check_filename(info, datetime(2026, 10, 20)) == 'Check for deposit 20261019.pdf'
 
-    def test_several_checks_named_checks_with_date(self):
+    def test_several_checks_named_for_deposit_with_date(self):
         info = {
             'business_name': 'Acme', 'document_type': 'Check', 'document_title': None,
             'invoice_date': '2026-10-19', 'invoice_number': ['1234', '5678'],
             'patient_animal_name': None, 'account_type': None, 'account_last_4': None,
         }
-        assert self._check_filename(info, datetime(2026, 10, 20)) == 'Checks 20261019.pdf'
+        assert self._check_filename(info, datetime(2026, 10, 20)) == 'Checks for deposit 20261019.pdf'
+
+    @pytest.mark.parametrize('pages, expected_type', [(0, 'Check'), (2, 'Check'), (3, 'Checks'), (4, 'Checks')])
+    def test_check_scan_past_one_front_and_back_is_several_checks(self, pages, expected_type):
+        """Two checks scanned front and back: the model saw pages 1-2 and reported only check 1101."""
+        from invoice_renamer import extract_invoice_info
+
+        response = json.dumps({
+            'business_name': 'Example Bank', 'document_type': 'Check', 'document_title': None,
+            'invoice_date': '2026-10-23', 'invoice_number': '1101',
+        })
+        with patch('invoice_renamer.call_llm_api', return_value=response), \
+                patch('invoice_renamer._pdf_page_count', return_value=pages), \
+                patch('invoice_renamer._pdf_texts_for_families', return_value=(None, None)):
+            info = extract_invoice_info('scan.pdf')
+        assert info['document_type'] == expected_type
+
+    @patch('invoice_renamer.subprocess.run')
+    @patch('invoice_renamer._find_pdfinfo', return_value='/usr/bin/pdfinfo')
+    def test_pdf_page_count_reads_pdfinfo(self, _find, mock_run):
+        from invoice_renamer import _pdf_page_count
+
+        mock_run.return_value = MagicMock(stdout='Title: x\nPages:           4\nEncrypted: no\n')
+        assert _pdf_page_count('scan.pdf') == 4
+        mock_run.return_value = MagicMock(stdout='')
+        assert _pdf_page_count('scan.pdf') == 0
+        assert _pdf_page_count('photo.jpg') == 0
 
     def test_check_decade_correction_only_inside_window(self):
         from invoice_renamer import _correct_check_decade
