@@ -153,6 +153,37 @@ class TestDocumentFamilyGoldens:
         }
         assert _filename(info, _load('national_grid_barn.txt')) == 'National Grid Barn 5018 20260729.pdf'
 
+    def test_utility_invoice_uses_bill_date_not_due_date(self):
+        """The model read the Please Pay By box (Dec 17) as the invoice date."""
+        info = {
+            'business_name': 'National Grid',
+            'document_type': 'Invoice',
+            'document_title': 'Barn',
+            'invoice_date': '2026-12-17',
+            'invoice_number': None,
+            'patient_animal_name': None,
+            'account_type': None,
+            'account_last_4': '5018',
+        }
+        assert _filename(info, _load('national_grid_bill_issued.txt')) == 'National Grid Barn 5018 20261123.pdf'
+
+    def test_utility_invoice_without_bill_date_uses_period_end(self):
+        from document_families import apply_statement_date
+
+        text = _load('national_grid_bill_issued.txt').replace('DATE BILL ISSUED', 'NOTICE')
+        info = {'document_type': 'Invoice', 'account_type': None, 'invoice_date': '2026-12-17'}
+        assert apply_statement_date(info, text, lambda _label: False)
+        assert info['invoice_date'] == '2026-11-23'
+
+    @pytest.mark.parametrize('current', ['2026-11-23', '2026-11-20'])
+    def test_invoice_date_within_billing_period_is_kept(self, current):
+        from document_families import apply_statement_date
+
+        text = 'Invoice\nBilling Period Oct 23, 2026 to Nov 23, 2026\nDue Date Dec 17, 2026\n'
+        info = {'document_type': 'Invoice', 'account_type': None, 'invoice_date': current}
+        assert not apply_statement_date(info, text, lambda _label: False)
+        assert info['invoice_date'] == current
+
     @pytest.mark.parametrize('title', ['Apt', 'Apt 102B', 'Main Blvd'])
     def test_duke_service_address_unit_is_not_a_premise(self, title):
         """A unit on the service street is not a premise. Keep Invoice + last-4."""

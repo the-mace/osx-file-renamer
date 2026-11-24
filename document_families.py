@@ -66,6 +66,7 @@ LABELED_STATEMENT_DATE_RE = re.compile(
     r'statement\s*(?:closing\s*)?date'
     r'|closing\s*date'
     r'|bill\s*date'
+    r'|date\s*bill\s*issued'
     r'|as\s*of\s*date'
     r'|(?:^|\n)\s*as\s*of'
     r')\s*[:\-]?\s*'
@@ -82,9 +83,15 @@ LABELED_STATEMENT_DATE_RANK = {
     'statement closing date': 1,
     'closing date': 1,
     'bill date': 2,
+    'date bill issued': 2,
     'as of date': 3,
     'as of': 4,
 }
+# An invoice takes only real bill-date labels, not brokerage-style "as of".
+INVOICE_BILL_DATE_MAX_RANK = 2
+# National Grid prints BILLING PERIOD as a column header two layout lines above the range.
+BILLING_PERIOD_LABEL_RE = re.compile(r'(?i)\b(?:billing|service)\s+period\b')
+BILLING_PERIOD_LOOKAHEAD_CHARS = 800
 PERIOD_RANGE_RES = (
     re.compile(
         r'(?P<start>\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})\s*(?:[-–—]|to)\s*'
@@ -248,11 +255,12 @@ def _statement_date_label_rank(label):
     return LABELED_STATEMENT_DATE_RANK.get(key, 99)
 
 
-def parse_labeled_statement_date(text):
+def parse_labeled_statement_date(text, max_rank=None):
     """Labeled Statement/Closing/Bill/As-of Date as YYYY-MM-DD, or None.
 
     Explicit labels beat billing-period ranges. Closing Date / Statement Date
     beat incidental rewards "as of" snapshots. Does not match Due Date.
+    max_rank drops weaker labels (see LABELED_STATEMENT_DATE_RANK).
     """
     if not text:
         return None
@@ -262,10 +270,51 @@ def parse_labeled_statement_date(text):
         parsed = _parse_loose_date_token(match.group('date'))
         if not parsed:
             continue
-        candidate = (_statement_date_label_rank(match.group('label')), match.start(), parsed)
+        rank = _statement_date_label_rank(match.group('label'))
+        if max_rank is not None and rank > max_rank:
+            continue
+        candidate = (rank, match.start(), parsed)
         if best is None or candidate[:2] < best[:2]:
             best = candidate
     return best[2] if best else None
+
+
+def parse_labeled_billing_period_end(text):
+    """End of a range under a Billing/Service Period label, as YYYY-MM-DD, or None."""
+    if not text:
+        return None
+    head = text[:STATEMENT_HEAD_CHARS]
+    for label in BILLING_PERIOD_LABEL_RE.finditer(head):
+        _, end = parse_statement_period_range(
+            head[label.end():label.end() + BILLING_PERIOD_LOOKAHEAD_CHARS]
+        )
+        if end:
+            return end
+    return None
+
+
+def _apply_bill_date(info, text):
+    """Bill date on a utility-style invoice: labeled bill date, else period end.
+
+    The model reads the large Due Date / Please Pay By box as the invoice date.
+    A date after the labeled billing period end is that due date. Earlier dates
+    are left alone so a plain invoice keeps its own invoice date.
+    """
+    logger = logging.getLogger(__name__)
+    current = info.get('invoice_date')
+    labeled = parse_labeled_statement_date(text, max_rank=INVOICE_BILL_DATE_MAX_RANK)
+    if labeled:
+        if current != labeled:
+            logger.info(f"Preferring labeled bill date {labeled} over extracted date {current!r}")
+            info['invoice_date'] = labeled
+            return True
+        return False
+    period_end = parse_labeled_billing_period_end(text)
+    if period_end and (not current or str(current) > period_end):
+        logger.info(f"Preferring billing period end {period_end} over extracted date {current!r}")
+        info['invoice_date'] = period_end
+        return True
+    return False
 
 
 def parse_statement_period_range(text):
@@ -296,6 +345,8 @@ def parse_statement_period_end(text):
 def apply_statement_date(info, text, is_account_category):
     """Prefer a labeled statement date, else correct a period-start pick.
 
+    Invoices take a labeled bill date, or the billing period end in place of a later due date.
+
     is_account_category is invoice_renamer's account-category check so the
     Statement vs Report gate stays in one place. Returns True when the date changes.
     """
@@ -309,6 +360,8 @@ def apply_statement_date(info, text, is_account_category):
         or is_account_category(dtype)
         or (account_type and is_account_category(account_type))
     )
+    if dtype == 'invoice' and not is_financial_statement:
+        return _apply_bill_date(info, text)
     if not is_financial_statement:
         return False
 
